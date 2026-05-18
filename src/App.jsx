@@ -308,7 +308,7 @@ export default function App() {
           <div className="loginMark">SL</div>
           <div>
             <p className="eyebrow">Saaspro Labs</p>
-            <h1>Aman Pre-Auth Intake</h1>
+            <h1>Pre-Auth Operations</h1>
           </div>
 
           <label>
@@ -355,7 +355,7 @@ export default function App() {
           <div>
             <p className="eyebrow">Saaspro Labs</p>
             <h1>Operations Dashboard</h1>
-            <span>{session.org_name || 'Aman HMO'} operations</span>
+            <span>{session.org_name ? `${session.org_name} operations` : 'Insurance operations'}</span>
           </div>
         </div>
 
