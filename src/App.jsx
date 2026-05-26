@@ -129,6 +129,14 @@ function demoAmount(value) {
   return (toNumber(value) || 0) * DEMO_VALUE_MULTIPLIER;
 }
 
+function providerLabel(value) {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    return value.name || value.role || value.email || JSON.stringify(value);
+  }
+  return String(value);
+}
+
 function enrichRequest(request) {
   const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
   const encounter = payload.encounter || {};
@@ -154,7 +162,7 @@ function enrichRequest(request) {
     requested_amount: demoAmount(requestedAmount),
     line_item_count: items.length,
     facility: encounter.facility_name || request.facility,
-    requesting_provider: request.requesting_provider || payload.submission?.submitted_by?.role,
+    requesting_provider: providerLabel(request.requesting_provider) || providerLabel(payload.submission?.submitted_by),
   };
 }
 
@@ -368,7 +376,7 @@ export default function App() {
         request.plan,
         request.item_description,
         request.facility,
-        request.requesting_provider,
+        providerLabel(request.requesting_provider),
         request.patient_name,
         request.decision,
         request.status,
@@ -799,7 +807,7 @@ function RequestDetail({ request }) {
         </div>
         <div>
           <dt>Provider</dt>
-          <dd>{request.requesting_provider || 'Not provided'}</dd>
+          <dd>{providerLabel(request.requesting_provider) || 'Not provided'}</dd>
         </div>
         <div>
           <dt>Received</dt>
