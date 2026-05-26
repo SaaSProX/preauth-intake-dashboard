@@ -29,6 +29,12 @@ function normalizeApiBaseUrl(value) {
   return withScheme.replace(/\/+$/, '');
 }
 
+function parseApiDate(value) {
+  if (!value || value instanceof Date) return value;
+  const text = String(value);
+  return /(?:z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`;
+}
+
 function formatDate(value) {
   if (!value) return 'Not processed';
   return new Intl.DateTimeFormat('en', {
@@ -36,7 +42,7 @@ function formatDate(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(value));
+  }).format(new Date(parseApiDate(value)));
 }
 
 function formatDuration(seconds) {
@@ -69,7 +75,7 @@ function asArray(value) {
 }
 
 function localDateKey(value) {
-  const date = value instanceof Date ? value : new Date(value);
+  const date = value instanceof Date ? value : new Date(parseApiDate(value));
   if (Number.isNaN(date.getTime())) return '';
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
