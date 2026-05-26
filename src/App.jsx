@@ -20,7 +20,7 @@ import {
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
-const DEMO_VALUE_MULTIPLIER = 2;
+const DEMO_VALUE_MULTIPLIER = 3;
 
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || '').trim();
