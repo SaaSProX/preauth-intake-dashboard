@@ -356,7 +356,7 @@ button {
 
 .metricsGrid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -597,8 +597,14 @@ button {
   white-space: nowrap;
 }
 
-.requestMeta span:last-child {
+.requestMeta span:nth-child(2) {
   text-align: right;
+}
+
+.requestMeta strong {
+  color: var(--strong);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .requestStatusLine {

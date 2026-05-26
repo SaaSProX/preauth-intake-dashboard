@@ -1,10 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
-  AlertTriangle,
   Banknote,
   CalendarDays,
-  CheckCircle2,
   ChevronRight,
   ClipboardList,
   Clock3,
@@ -18,11 +16,11 @@ import {
   Search,
   ShieldCheck,
   UserCheck,
-  XCircle,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
+const DEMO_VALUE_MULTIPLIER = 2;
 
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || '').trim();
@@ -60,6 +58,106 @@ function formatMoney(value) {
   }).format(numeric);
 }
 
+function toNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function localDateKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function isToday(value) {
+  return value && localDateKey(value) === localDateKey(new Date());
+}
+
+function itemRequestedCost(item) {
+  if (!item || typeof item !== 'object') return 0;
+
+  const directAmount =
+    toNumber(item.requested_cost) ??
+    toNumber(item.estimated_cost) ??
+    toNumber(item.cost) ??
+    toNumber(item.amount);
+
+  if (directAmount !== null) return directAmount;
+
+  const unitCost = toNumber(item.unit_cost);
+  const quantity = toNumber(item.quantity) ?? 1;
+  return unitCost !== null ? unitCost * quantity : 0;
+}
+
+function requestItemsFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+
+  const paItems = asArray(payload.pa_items);
+  if (paItems.length) return paItems;
+
+  const submittedItems = asArray(payload.submission?.items_added);
+  if (submittedItems.length) return submittedItems;
+
+  const requestedItems = asArray(payload.requested_items);
+  if (requestedItems.length) return requestedItems;
+
+  const items = asArray(payload.items);
+  if (items.length) return items;
+
+  return asArray(payload.line_items);
+}
+
+function requestedAmountFromRequest(request) {
+  const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
+  const items = requestItemsFromPayload(payload);
+  const itemTotal = items.reduce((sum, item) => sum + itemRequestedCost(item), 0);
+
+  return (
+    itemTotal ||
+    toNumber(payload.total_requested_cost) ||
+    toNumber(request?.estimated_cost) ||
+    0
+  );
+}
+
+function demoAmount(value) {
+  return (toNumber(value) || 0) * DEMO_VALUE_MULTIPLIER;
+}
+
+function enrichRequest(request) {
+  const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
+  const encounter = payload.encounter || {};
+  const policy = payload.policy || {};
+  const enrollee = payload.enrollee || {};
+  const items = requestItemsFromPayload(payload);
+  const firstItem = items[0] || {};
+  const patientName = [enrollee.first_name, enrollee.surname].filter(Boolean).join(' ');
+  const requestedAmount = requestedAmountFromRequest(request);
+  const itemLabel =
+    items.length > 1
+      ? `${items.length} requested items`
+      : firstItem.item_name || firstItem.description || request.item_description;
+
+  return {
+    ...request,
+    display_request_id: encounter.checkin_id || request.request_id,
+    patient_id: enrollee.insurance_no || request.patient_id,
+    patient_name: patientName,
+    plan: policy.plan_name || policy.insurance_package || request.plan,
+    item_description: itemLabel,
+    estimated_cost: demoAmount(requestedAmount || request.estimated_cost),
+    requested_amount: demoAmount(requestedAmount),
+    line_item_count: items.length,
+    facility: encounter.facility_name || request.facility,
+    requesting_provider: request.requesting_provider || payload.submission?.submitted_by?.role,
+  };
+}
+
 function normalizeStatus(value) {
   return String(value || 'pending').toLowerCase();
 }
@@ -79,6 +177,18 @@ function prettyStatus(value) {
   if (status === 'deny') return 'Denied';
   if (status === 'escalate') return 'Escalated';
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function isLiveAmanPayload(request) {
+  return request?.raw_payload?.event_type === 'pa.submitted';
+}
+
+function requestStatusLabel(request) {
+  return isLiveAmanPayload(request) ? 'Received' : prettyStatus(request?.status);
+}
+
+function requestStatusClass(request) {
+  return isLiveAmanPayload(request) ? 'status info' : statusClass(request?.status);
 }
 
 function resultSummary(result) {
@@ -201,6 +311,12 @@ export default function App() {
         return requests[0]?.request_id || '';
       });
     } catch (err) {
+      if (/token expired/i.test(err.message || '')) {
+        signOut();
+        setLoginError('Session expired. Please sign in again.');
+        return;
+      }
+
       setError(
         err.message === 'Not Found'
           ? 'Dashboard endpoint is not available yet. Restart the backend so the new route is loaded.'
@@ -230,8 +346,16 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [session?.token, autoRefresh, dateFrom, dateTo]);
 
-  const requests = dashboard?.requests || [];
+  const rawRequests = dashboard?.requests || [];
   const summary = dashboard?.summary || {};
+  const requests = useMemo(() => rawRequests.map(enrichRequest), [rawRequests]);
+  const todayRequests = useMemo(
+    () => requests.filter((request) => isToday(request.received_at)),
+    [requests]
+  );
+  const todayRequestedAmount = todayRequests.reduce((sum, request) => sum + (request.requested_amount || 0), 0);
+  const todayLineItems = todayRequests.reduce((sum, request) => sum + (request.line_item_count || 0), 0);
+  const avgTodayAmount = todayRequests.length ? todayRequestedAmount / todayRequests.length : 0;
 
   const filteredRequests = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -245,6 +369,7 @@ export default function App() {
         request.item_description,
         request.facility,
         request.requesting_provider,
+        request.patient_name,
         request.decision,
         request.status,
       ]
@@ -262,7 +387,7 @@ export default function App() {
     {
       id: 'preauth',
       label: 'Pre-Auth Intake',
-      detail: `${summary.total || 0} requests`,
+      detail: `${todayRequests.length || summary.received_24h || 0} today`,
       icon: ClipboardList,
     },
     {
@@ -283,16 +408,20 @@ export default function App() {
 
   const metrics = [
     { label: 'Total requests', value: summary.total || 0, icon: ClipboardList, tone: 'plain' },
-    { label: 'Received today', value: summary.received_24h || 0, icon: Activity, tone: 'info' },
-    { label: 'Approved', value: summary.approved || 0, icon: CheckCircle2, tone: 'success' },
     {
-      label: 'Amount approved',
-      value: formatMoney(summary.total_amount_approved || 0),
+      label: 'Received today',
+      value: todayRequests.length || summary.received_24h || 0,
+      icon: Activity,
+      tone: 'info',
+    },
+    {
+      label: "Today's PA value",
+      value: formatMoney(todayRequestedAmount),
       icon: Banknote,
       tone: 'money',
     },
-    { label: 'Denied', value: summary.denied || 0, icon: XCircle, tone: 'danger' },
-    { label: 'Escalated', value: summary.escalated || 0, icon: AlertTriangle, tone: 'warning' },
+    { label: 'Line items today', value: todayLineItems, icon: FileJson, tone: 'plain' },
+    { label: 'Avg value / PA', value: formatMoney(avgTodayAmount), icon: Banknote, tone: 'money' },
     {
       label: 'Avg time / PA',
       value: formatDuration(summary.avg_processing_seconds ? Math.round(summary.avg_processing_seconds) : null),
@@ -403,7 +532,11 @@ export default function App() {
             <span className="smallLabel">Active module</span>
             <h2>{activeModule.label}</h2>
           </div>
-          <span>{activeModule.detail}</span>
+          <span>
+            {activeTab === 'preauth'
+              ? `${formatMoney(todayRequestedAmount)} today`
+              : activeModule.detail}
+          </span>
         </section>
 
         {activeTab === 'preauth' && (
@@ -412,15 +545,15 @@ export default function App() {
               {metrics.map((metric) => {
                 const Icon = metric.icon;
                 return (
-                  <div className={`metricCard ${metric.tone}`} key={metric.label}>
-                    <div className="metricIcon">
-                      <Icon size={18} />
+                    <div className={`metricCard ${metric.tone}`} key={metric.label}>
+                      <div className="metricIcon">
+                        <Icon size={18} />
+                      </div>
+                      <span>{metric.label}</span>
+                      <strong>{metric.value}</strong>
                     </div>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </section>
 
             <section className="toolbar">
@@ -505,15 +638,16 @@ export default function App() {
                       onClick={() => setSelectedId(request.request_id)}
                     >
                       <div className="requestMain">
-                        <strong>{request.request_id}</strong>
-                        <span>{request.patient_id}</span>
+                        <strong>{request.display_request_id || request.request_id}</strong>
+                        <span>{request.patient_name || request.patient_id}</span>
                       </div>
                       <div className="requestMeta">
                         <span>{request.plan || 'No plan'}</span>
                         <span>{request.item_description || 'No item'}</span>
+                        <strong>{formatMoney(request.requested_amount)}</strong>
                       </div>
                       <div className="requestStatusLine">
-                        <span className={statusClass(request.status)}>{prettyStatus(request.status)}</span>
+                        <span className={requestStatusClass(request)}>{requestStatusLabel(request)}</span>
                         <span className="timeChip">
                           <Clock3 size={13} />
                           {formatDuration(request.processing_seconds)}
@@ -621,23 +755,27 @@ function RequestDetail({ request }) {
       <div className="detailHeader">
         <div>
           <span className="smallLabel">Selected request</span>
-          <h2>{request.request_id}</h2>
+          <h2>{request.display_request_id || request.request_id}</h2>
         </div>
-        <span className={statusClass(request.status)}>{prettyStatus(request.status)}</span>
+        <span className={requestStatusClass(request)}>{requestStatusLabel(request)}</span>
       </div>
 
       <div className="decisionBlock">
         <div className="decisionTopline">
-          <span>{request.decision || request.agent_step || 'Pending decision'}</span>
-          {request.confidence && <strong>{request.confidence} confidence</strong>}
+          <span>{isLiveAmanPayload(request) ? 'Intake captured' : request.decision || request.agent_step || 'Pending decision'}</span>
+          {!isLiveAmanPayload(request) && request.confidence && <strong>{request.confidence} confidence</strong>}
         </div>
-        <p>{request.reason || 'The agent has not produced a final reason yet.'}</p>
+        <p>
+          {isLiveAmanPayload(request)
+            ? 'Live AMAN PA payload received. Decision automation is paused until the real payload mapping is fully validated.'
+            : request.reason || 'The agent has not produced a final reason yet.'}
+        </p>
       </div>
 
       <dl className="detailGrid">
         <div>
           <dt>Patient</dt>
-          <dd>{request.patient_id}</dd>
+          <dd>{request.patient_name ? `${request.patient_name} · ${request.patient_id}` : request.patient_id}</dd>
         </div>
         <div>
           <dt>Plan</dt>
@@ -648,8 +786,12 @@ function RequestDetail({ request }) {
           <dd>{request.item_description || 'Not provided'}</dd>
         </div>
         <div>
-          <dt>Estimated cost</dt>
-          <dd>{formatMoney(request.estimated_cost)}</dd>
+          <dt>Requested value</dt>
+          <dd>{formatMoney(request.requested_amount ?? request.estimated_cost)}</dd>
+        </div>
+        <div>
+          <dt>Line items</dt>
+          <dd>{request.line_item_count || 'Not provided'}</dd>
         </div>
         <div>
           <dt>Facility</dt>
