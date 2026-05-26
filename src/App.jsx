@@ -20,7 +20,6 @@ import {
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
-const DEMO_VALUE_MULTIPLIER = 3;
 
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || '').trim();
@@ -131,10 +130,6 @@ function requestedAmountFromRequest(request) {
   );
 }
 
-function demoAmount(value) {
-  return (toNumber(value) || 0) * DEMO_VALUE_MULTIPLIER;
-}
-
 function providerLabel(value) {
   if (!value) return '';
   if (typeof value === 'object') {
@@ -164,8 +159,8 @@ function enrichRequest(request) {
     patient_name: patientName,
     plan: policy.plan_name || policy.insurance_package || request.plan,
     item_description: itemLabel,
-    estimated_cost: demoAmount(requestedAmount || request.estimated_cost),
-    requested_amount: demoAmount(requestedAmount),
+    estimated_cost: requestedAmount || request.estimated_cost,
+    requested_amount: requestedAmount,
     line_item_count: items.length,
     facility: encounter.facility_name || request.facility,
     requesting_provider: providerLabel(request.requesting_provider) || providerLabel(payload.submission?.submitted_by),
