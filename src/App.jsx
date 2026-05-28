@@ -502,15 +502,20 @@ function Drawer({ request, open, onClose }) {
 function StatusBar({ session, role, onRole, refreshedLabel }) {
   const org = session.org_name || 'Organization';
   const short = org.split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+  const isAdmin = (session.role || 'member') === 'admin';
   return (
     <div className="statusbar">
       <div className="sb-org"><span className="org-dot">{short}</span><b>{org}</b><span className="scope">org-scoped</span></div>
       <div className="sb-refresh"><span className="spin" /> {refreshedLabel}</div>
       <div className="sb-right">
-        <span className="roleswitch">
-          <button className={role === 'admin' ? 'on' : ''} onClick={() => onRole('admin')}>Admin</button>
-          <button className={role === 'member' ? 'on' : ''} onClick={() => onRole('member')}>Member</button>
-        </span>
+        {isAdmin ? (
+          <span className="roleswitch" title="Preview the member experience">
+            <button className={role === 'admin' ? 'on' : ''} onClick={() => onRole('admin')}>Admin</button>
+            <button className={role === 'member' ? 'on' : ''} onClick={() => onRole('member')}>Member</button>
+          </span>
+        ) : (
+          <span className="roleswitch"><button className="on">Member</button></span>
+        )}
         <span className="live-toggle"><span className="led" /> Live</span>
       </div>
     </div>
