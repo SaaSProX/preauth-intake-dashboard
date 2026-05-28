@@ -78,11 +78,94 @@ function planClass(p) {
 }
 
 /* ============================================================
+   SVG chart builders (ported from the prototype, return HTML strings)
+   ============================================================ */
+function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)', labels = null } = {}) {
+  if (!data || !data.length) return '';
+  const m = max || Math.max(...data) * 1.1 || 1;
+  const pad = { l: 38, r: 8, t: 8, b: 22 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const bw = iw / data.length;
+  const barW = Math.max(2, bw * 0.4);
+  let bars = '';
+  data.forEach((v, i) => {
+    const bh = (v / m) * ih;
+    const x = pad.l + i * bw + (bw - barW) / 2;
+    const y = pad.t + ih - bh;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${accent}"/>`;
+  });
+  let grid = '', ylab = '';
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const val = (m / ticks) * t;
+    const y = pad.t + ih - (val / m) * ih;
+    grid += `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w - pad.r}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`;
+    ylab += `<text x="${pad.l - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${val >= 1000 ? (val / 1000) + 'k' : Math.round(val)}</text>`;
+  }
+  let xlab = '';
+  if (labels) labels.forEach((l, i) => {
+    const idx = Math.round((data.length - 1) * (i / (labels.length - 1)));
+    const x = pad.l + idx * bw + bw / 2;
+    xlab += `<text x="${x.toFixed(1)}" y="${h - 5}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${l}</text>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">${grid}${bars}${ylab}${xlab}</svg>`;
+}
+function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = true, labels = null, prefix = '', suffix = '' } = {}) {
+  if (!data || data.length < 2) return '';
+  const max = Math.max(...data) * 1.12, min = Math.min(...data) * 0.85;
+  const span = max - min || 1;
+  const pad = { l: 44, r: 10, t: 10, b: 22 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const xs = (i) => pad.l + (iw * i) / (data.length - 1);
+  const ys = (v) => pad.t + ih - ((v - min) / span) * ih;
+  let d = '';
+  data.forEach((v, i) => { d += (i ? 'L' : 'M') + xs(i).toFixed(1) + ' ' + ys(v).toFixed(1) + ' '; });
+  const area = d + `L${xs(data.length - 1).toFixed(1)} ${(pad.t + ih).toFixed(1)} L${xs(0).toFixed(1)} ${(pad.t + ih).toFixed(1)} Z`;
+  let grid = '', ylab = '';
+  for (let t = 0; t <= 4; t++) {
+    const val = min + (span / 4) * t;
+    const y = ys(val);
+    grid += `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w - pad.r}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 3"/>`;
+    ylab += `<text x="${pad.l - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${prefix}${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : Math.round(val)}${suffix}</text>`;
+  }
+  let xlab = '';
+  if (labels) labels.forEach((l, i) => {
+    const idx = Math.round((data.length - 1) * (i / (labels.length - 1)));
+    xlab += `<text x="${xs(idx).toFixed(1)}" y="${h - 5}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${l}</text>`;
+  });
+  const gid = 'g' + Math.random().toString(36).slice(2, 7);
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity="0.16"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs>
+    ${grid}${fill ? `<path d="${area}" fill="url(#${gid})"/>` : ''}
+    <path d="${d}" fill="none" stroke="${accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${data.map((v, i) => i === data.length - 1 ? `<circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="3.5" fill="${accent}"/>` : '').join('')}
+    ${ylab}${xlab}</svg>`;
+}
+function chartDonut(slices, { size = 188, thickness = 26 } = {}) {
+  const total = slices.reduce((a, s) => a + s.v, 0) || 1;
+  const r = (size - thickness) / 2, cx = size / 2, cy = size / 2, C = 2 * Math.PI * r;
+  let off = 0, segs = '';
+  slices.forEach((s) => {
+    const len = (s.v / total) * C;
+    segs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.c}" stroke-width="${thickness}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    off += len;
+  });
+  const top = slices.reduce((a, s) => (s.v > a.v ? s : a), slices[0] || { v: 0, k: '' });
+  return `<div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="flex:none">${segs}
+      <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="var(--mono)" font-size="26" font-weight="600" fill="var(--ink)">${Math.round((top.v / total) * 100)}%</text>
+      <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">${(top.k || '').toUpperCase()}</text>
+    </svg>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${slices.map((s) => `<div style="display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12.5px"><span style="width:9px;height:9px;border-radius:2px;background:${s.c}"></span><span style="color:var(--ink-2);min-width:78px">${s.k}</span><b style="color:var(--ink)">${s.v.toLocaleString()}</b></div>`).join('')}
+    </div></div>`;
+}
+
+/* ============================================================
    Map the real /auth/preauth-dashboard request -> view model
    ============================================================ */
 function asObj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
 function asArr(v) { return Array.isArray(v) ? v : []; }
-
 function providerLabel(v) {
   if (!v) return '';
   if (typeof v === 'object') return v.name || v.role || v.email || '';
@@ -114,7 +197,6 @@ function requestedAmount(r, raw) {
   const total = items.reduce((s, it) => s + itemReqCost(it), 0);
   return total || Number(p.total_requested_cost) || Number(r.estimated_cost) || 0;
 }
-
 const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
 const STAGE_Q = {
   Eligibility: 'Is the member valid — active, not expired, within age limit?',
@@ -148,7 +230,6 @@ function deriveStages(r) {
   }
   return out;
 }
-
 function mapRequest(r) {
   const raw = asObj(r.raw_payload);
   const enc = asObj(raw.encounter);
@@ -190,7 +271,6 @@ function mapRequest(r) {
     extracted_fields: r.extracted_fields,
   };
 }
-
 function jsonPretty(obj) {
   if (obj == null) return '<span style="color:#6b7385">null</span>';
   let json;
@@ -212,11 +292,7 @@ function Pill({ status }) {
 }
 function Conf({ level }) {
   if (!level) return null;
-  return (
-    <span className={`conf ${String(level).toLowerCase()}`}>
-      <span className="bars"><i /><i /><i /></span><b>{level}</b> confidence
-    </span>
-  );
+  return <span className={`conf ${String(level).toLowerCase()}`}><span className="bars"><i /><i /><i /></span><b>{level}</b> confidence</span>;
 }
 function PlanTag({ plan }) {
   return <span className={`plan-tag ${planClass(plan)}`}>{plan}</span>;
@@ -224,29 +300,57 @@ function PlanTag({ plan }) {
 function CodeBlock({ data, style }) {
   return <div className="codeblock" style={style} dangerouslySetInnerHTML={{ __html: jsonPretty(data) }} />;
 }
+function Html({ html, className, style }) {
+  return <div className={className} style={style} dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
 /* ============================================================
-   Queue list item (split layout)
+   Report: metric card + queue table
    ============================================================ */
-function QueueItem({ r, selected, onSelect }) {
+function MetricCard({ title, desc, big, chartHtml, moveH, moveP }) {
+  return (
+    <div className="metric">
+      <h3>{title}</h3>
+      <p className="desc">{desc}</p>
+      {big ? <div className="big" dangerouslySetInnerHTML={{ __html: big }} /> : null}
+      <div className="chart-wrap">
+        {chartHtml ? <Html html={chartHtml} /> : <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '24px 0' }}>Not enough data for a trend yet.</div>}
+      </div>
+      <div className="insight-sep"><span className="sparkle">✦</span> Insight is autogenerated</div>
+      <div className="move-h">{moveH}</div>
+      <p className="move-p">{moveP}</p>
+      <div className="metric-foot">
+        <a className="src" href="#" onClick={(e) => e.preventDefault()}>Go to source <span style={{ fontSize: 11 }}>↗</span></a>
+        <div className="foot-icons" aria-hidden="true"><span title="Expand">⤢</span><span title="Annotate">✎</span><span title="Snapshot">⤓</span></div>
+      </div>
+    </div>
+  );
+}
+function QueueHead() {
+  return (
+    <div className="qhead">
+      <span>Reference</span><span>Patient</span><span>Plan</span><span>Item</span>
+      <span style={{ textAlign: 'right' }}>Amount</span><span style={{ textAlign: 'right' }}>Status · latency</span><span style={{ textAlign: 'right' }}>Received</span>
+    </div>
+  );
+}
+function QueueRow({ r, selected, onSelect }) {
   const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
   return (
-    <div className={`qitem ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
-      <div className="qi-top"><span className="qi-ref">{ref}</span><Pill status={r.status} /></div>
-      <div className="qi-name">
-        {r.patient_name || <span className="muted">Unnamed enrollee</span>}
-        <small>{r.patient_id}</small>
-      </div>
-      <div className="qi-meta">
-        <PlanTag plan={r.plan} /><span>{r.item_description}</span>
-        <span className="amt">{fmtNGN(r.requested_amount)}</span>
-      </div>
+    <div className={`qrow ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
+      <div className="ref">{ref}<small>{r.checkin_type} · {r.item_type || '—'}</small></div>
+      <div className="pt">{r.patient_name || <span className="muted">Unnamed enrollee</span>}<small>{r.patient_id}</small></div>
+      <div className="plan"><PlanTag plan={r.plan} /></div>
+      <div className="item" title={r.item_description}>{r.item_description}{r.line_item_count > 1 ? <span className="muted"> ·{r.line_item_count}</span> : ''}</div>
+      <div className="amt">{fmtNGN(r.requested_amount)}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}><Pill status={r.status} /><span className="lat">{fmtSecs(r.processing_seconds)}</span></div>
+      <div className="when">{r.received_label}</div>
     </div>
   );
 }
 
 /* ============================================================
-   Detail view (decision + agent timeline + payload)
+   Detail (used inside the drawer)
    ============================================================ */
 function DecisionBlock({ r }) {
   const cls = (STATUS_META[r.status] || STATUS_META.pending).cls;
@@ -276,9 +380,7 @@ function DecisionBlock({ r }) {
     <div className={`decision ${cls}`}>
       <div className="verdict-row"><span className="verdict">{verdict}</span><Pill status={r.status} /><Conf level={r.confidence} /></div>
       {body}
-      {r.flags && r.flags.length > 0 && (
-        <div className="flags">{r.flags.map((f, i) => <span className="flag" key={i}>{f}</span>)}</div>
-      )}
+      {r.flags && r.flags.length > 0 && <div className="flags">{r.flags.map((f, i) => <span className="flag" key={i}>{f}</span>)}</div>}
     </div>
   );
 }
@@ -297,13 +399,9 @@ function DetailsGrid({ r }) {
     ['Received', r.received_label, true],
     ['Decision latency', fmtSecs(r.processing_seconds), true],
   ];
-  return (
-    <div className="dgrid">
-      {cells.map(([l, v, mono], i) => (
-        <div className="cell" key={i}><div className="lab">{l}</div><div className={`val ${mono ? 'mono' : ''}`}>{v}</div></div>
-      ))}
-    </div>
-  );
+  return <div className="dgrid">{cells.map(([l, v, mono], i) => (
+    <div className="cell" key={i}><div className="lab">{l}</div><div className={`val ${mono ? 'mono' : ''}`}>{v}</div></div>
+  ))}</div>;
 }
 function LineItems({ r }) {
   if (!r.items || !r.items.length) return null;
@@ -324,11 +422,7 @@ function LineItems({ r }) {
 }
 function AgentTimeline({ r }) {
   if (!r.stages || !r.stages.length) {
-    return (
-      <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>
-        Pipeline has not started for this request{r.status === 'received' ? ' — awaiting auto-decision.' : '.'}
-      </div>
-    );
+    return <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>Pipeline has not started for this request{r.status === 'received' ? ' — awaiting auto-decision.' : '.'}</div>;
   }
   return (
     <div className="timeline">
@@ -345,11 +439,7 @@ function AgentTimeline({ r }) {
               {s.time ? <span className="s-time">{s.time}</span> : null}
             </div>
             <p className="s-sum">{STAGE_Q[s.name] || ''}</p>
-            {s.result ? (
-              <div className="s-raw">
-                <details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details>
-              </div>
-            ) : null}
+            {s.result ? <div className="s-raw"><details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details></div> : null}
           </div>
         );
       })}
@@ -357,15 +447,7 @@ function AgentTimeline({ r }) {
   );
 }
 function DetailView({ r }) {
-  if (!r) {
-    return (
-      <div className="stub-empty" style={{ paddingTop: 120 }}>
-        <div className="ph">▤</div>
-        <h4>Select a request</h4>
-        <p>Choose a request from the queue to see its decision, the full 4-agent reasoning timeline, and the raw payload.</p>
-      </div>
-    );
-  }
+  if (!r) return null;
   return (
     <div className="detail">
       <div className="dhead">
@@ -395,6 +477,19 @@ function DetailView({ r }) {
     </div>
   );
 }
+function Drawer({ request, open, onClose }) {
+  return (
+    <>
+      <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} />
+      <aside className={`drawer ${open ? 'open' : ''}`}>
+        <button className="icon-btn dclose" onClick={onClose} aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} /> : null}</div></div>
+      </aside>
+    </>
+  );
+}
 
 /* ============================================================
    Chrome: status bar, sidebar, ask bar
@@ -416,7 +511,6 @@ function StatusBar({ session, role, onRole, refreshedLabel }) {
     </div>
   );
 }
-
 const NAV = [
   { id: 'intake', label: 'Pre-Auth Intake', live: true },
   { id: 'health', label: 'Integration Health', live: false },
@@ -431,12 +525,7 @@ const NAV_ADMIN = [
 function Sidebar({ active, onNav, session, intakeCount }) {
   const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
   const item = (n) => (
-    <a
-      key={n.id}
-      className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`}
-      href="#"
-      onClick={(e) => { e.preventDefault(); onNav(n.id); }}
-    >
+    <a key={n.id} className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`} href="#" onClick={(e) => { e.preventDefault(); onNav(n.id); }}>
       <span className="gl" />{n.label}
       {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)}
     </a>
@@ -458,17 +547,11 @@ function Sidebar({ active, onNav, session, intakeCount }) {
     </aside>
   );
 }
-
 function AskBar({ context }) {
   const [q, setQ] = useState('');
   return (
     <div className="askbar-wrap">
       <form className="askbar" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-        <div className="suggests">
-          <button type="button" onClick={() => setQ('How many escalations today and why?')}>How many escalations today and why?</button>
-          <button type="button" onClick={() => setQ('Summarize denied requests')}>Summarize denied requests</button>
-          <button type="button" onClick={() => setQ('Average decision latency?')}>Average decision latency?</button>
-        </div>
         <div className="ask-input">
           <span className="caret">▌</span>
           <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Ask me about ${context}…`} />
@@ -483,24 +566,13 @@ function AskBar({ context }) {
 /* ============================================================
    Stub module views (IA placeholders — not yet wired to data)
    ============================================================ */
-function KpiTile({ label, val, sub }) {
-  return (
-    <div className="kpi">
-      <div className="k-label">{label}</div>
-      <div className="k-val tnum">{val}</div>
-      {sub ? <div className="k-sub">{sub}</div> : null}
-    </div>
-  );
-}
 function StubChannel({ title, sub, cols, note }) {
   return (
     <>
       <div className="stub-head"><h1 className="page-title">{title}</h1><span className="stub-badge">Module preview</span></div>
       <p className="page-sub">{sub}</p>
       <div className="stub-table">
-        <div className="sth" style={{ gridTemplateColumns: `repeat(${cols.length},1fr)` }}>
-          {cols.map((c) => <span key={c}>{c}</span>)}
-        </div>
+        <div className="sth" style={{ gridTemplateColumns: `repeat(${cols.length},1fr)` }}>{cols.map((c) => <span key={c}>{c}</span>)}</div>
         <div className="stub-empty"><div className="ph">▦</div><h4>No items yet</h4><p>{note}</p></div>
       </div>
     </>
@@ -513,8 +585,7 @@ function StubView({ id, session }) {
       <>
         <div className="stub-head"><h1 className="page-title">Integration Health</h1><span className="stub-badge">Not yet wired</span></div>
         <p className="page-sub">Inbound webhook deliveries from <b>{org}</b> · connect to <span className="muted">/auth/webhook-delivery-logs</span></p>
-        <div className="stub-table"><div className="stub-empty"><div className="ph">◴</div><h4>Delivery health view</h4>
-          <p>The backend already exposes delivery summary + per-attempt logs (auth, payload validity, duplicates, latency). This view will surface them.</p></div></div>
+        <div className="stub-table"><div className="stub-empty"><div className="ph">◴</div><h4>Delivery health view</h4><p>The backend already exposes delivery summary + per-attempt logs (auth, payload validity, duplicates, latency). This view will surface them.</p></div></div>
       </>
     );
   }
@@ -523,8 +594,7 @@ function StubView({ id, session }) {
       <>
         <div className="stub-head"><h1 className="page-title">Audit Trail</h1><span className="stub-badge">Not yet wired</span></div>
         <p className="page-sub">Trace one event end-to-end: <span className="muted">delivery → stored request → agent decision</span></p>
-        <div className="stub-table"><div className="stub-empty"><div className="ph">⛓</div><h4>End-to-end trace</h4>
-          <p>Backed by /auth/webhook-audit-trail — search an event_id, checkin_id, or request_id to follow it across the pipeline.</p></div></div>
+        <div className="stub-table"><div className="stub-empty"><div className="ph">⛓</div><h4>End-to-end trace</h4><p>Backed by /auth/webhook-audit-trail — search an event_id, checkin_id, or request_id to follow it across the pipeline.</p></div></div>
       </>
     );
   }
@@ -534,8 +604,7 @@ function StubView({ id, session }) {
         <div className="stub-head"><h1 className="page-title">Team</h1><span className="stub-badge">Not yet wired</span></div>
         <p className="page-sub">Members & pending invites for <b>{org}</b></p>
         <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — member role cannot invite or remove teammates.</div>
-        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">⊞</div><h4>Team management</h4>
-          <p>Backed by /auth/team, /auth/invite-member, /auth/team-member — list members, invite by email, remove.</p></div></div>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">⊞</div><h4>Team management</h4><p>Backed by /auth/team, /auth/invite-member, /auth/team-member — list members, invite by email, remove.</p></div></div>
       </>
     );
   }
@@ -545,8 +614,7 @@ function StubView({ id, session }) {
         <div className="stub-head"><h1 className="page-title">API Key</h1><span className="stub-badge">Not yet wired</span></div>
         <p className="page-sub">Credential the HMO uses to authenticate webhook deliveries · <b>{org}</b></p>
         <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — only admins can generate or revoke keys.</div>
-        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔑</div><h4>API key management</h4>
-          <p>Backed by /auth/api-key (generate / show-once / revoke). Used to onboard the client's webhook integration.</p></div></div>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔑</div><h4>API key management</h4><p>Backed by /auth/api-key (generate / show-once / revoke). Used to onboard the client's webhook integration.</p></div></div>
       </>
     );
   }
@@ -560,22 +628,19 @@ function StubView({ id, session }) {
 }
 
 /* ============================================================
-   Icons (inline, matching the prototype)
+   Icons
    ============================================================ */
 const IconSearch = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--ink-3)' }}>
-    <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
-  </svg>
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--ink-3)' }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
 );
 const IconCal = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" />
-  </svg>
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></svg>
 );
 const IconCopy = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
-  </svg>
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
+);
+const IconExport = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>
 );
 
 /* ============================================================
@@ -584,14 +649,7 @@ const IconCopy = () => (
 function Login({ email, setEmail, password, setPassword, onSubmit, error, loading }) {
   return (
     <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-2)', padding: 24 }}>
-      <form
-        onSubmit={onSubmit}
-        style={{
-          width: 'min(380px, 100%)', background: 'var(--bg)', border: '1px solid var(--line)',
-          borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-card)', padding: '34px 30px', display: 'flex',
-          flexDirection: 'column', gap: 16,
-        }}
-      >
+      <form onSubmit={onSubmit} style={{ width: 'min(380px, 100%)', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-card)', padding: '34px 30px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ width: 36, height: 36, borderRadius: 9, background: 'linear-gradient(135deg, var(--indigo), #8b6cf0)', color: '#fff', display: 'grid', placeItems: 'center', fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13 }}>SL</span>
           <div>
@@ -608,9 +666,7 @@ function Login({ email, setEmail, password, setPassword, onSubmit, error, loadin
           <div className="search"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" autoComplete="current-password" required /></div>
         </label>
         {error ? <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--bad-ink)', background: 'var(--bad-bg)', border: '1px solid var(--bad-line)', borderRadius: 8, padding: '8px 12px' }}>{error}</div> : null}
-        <button className="btn indigo" type="submit" disabled={loading} style={{ justifyContent: 'center' }}>
-          {loading ? 'Signing in…' : 'Sign in'}
-        </button>
+        <button className="btn indigo" type="submit" disabled={loading} style={{ justifyContent: 'center' }}>{loading ? 'Signing in…' : 'Sign in'}</button>
         <span className="eyebrow" style={{ textAlign: 'center' }}>Backend: {API_BASE_URL}</span>
       </form>
     </main>
@@ -633,15 +689,22 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activeNav, setActiveNav] = useState('intake');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [role, setRole] = useState('admin');
   const [lastLoaded, setLastLoaded] = useState(null);
 
-  useEffect(() => { document.body.dataset.layout = 'split'; return () => { delete document.body.dataset.layout; }; }, []);
+  useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
   useEffect(() => { if (session) setRole(session.role || 'admin'); }, [session]);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   async function apiRequest(path, options = {}) {
     const headers = {
@@ -649,11 +712,7 @@ export default function App() {
       ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
       ...(options.headers || {}),
     };
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...options,
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
+    const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, body: options.body ? JSON.stringify(options.body) : undefined });
     const text = await response.text();
     const data = text ? JSON.parse(text) : {};
     if (!response.ok) {
@@ -707,6 +766,7 @@ export default function App() {
     setSession(null);
     setDashboard(null);
     setSelectedId('');
+    setDrawerOpen(false);
   }
 
   useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token]);
@@ -719,108 +779,165 @@ export default function App() {
 
   const rawRequests = dashboard?.requests || [];
   const summary = dashboard?.summary || {};
+  const series = dashboard?.series || [];
   const requests = useMemo(() => rawRequests.map(mapRequest), [rawRequests]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return requests.filter((r) => {
       const okS = statusFilter === 'all' || r.status === statusFilter;
-      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.decision]
-        .filter(Boolean).join(' ').toLowerCase();
+      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.decision].filter(Boolean).join(' ').toLowerCase();
       return okS && (!q || blob.includes(q));
     });
   }, [requests, query, statusFilter]);
 
-  const selected = requests.find((r) => r.request_id === selectedId) || filtered[0] || null;
+  const selected = requests.find((r) => r.request_id === selectedId) || null;
 
-  useEffect(() => {
-    if (filtered.length && !filtered.some((r) => r.request_id === selectedId)) {
-      setSelectedId(filtered[0].request_id);
-    }
-  }, [filtered, selectedId]);
+  function openRequest(id) { setSelectedId(id); setDrawerOpen(true); }
 
   if (!session) {
     return <Login email={email} setEmail={setEmail} password={password} setPassword={setPassword} onSubmit={handleLogin} error={loginError} loading={loginLoading} />;
   }
 
   const refreshedLabel = loading ? 'Refreshing…' : (lastLoaded ? `Refreshed ${timeAgo(new Date(lastLoaded).toISOString())}` : 'Connecting…');
-  const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received'];
+  const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
+
+  // chart inputs from the real daily series + summary
+  const dayLabels = series.map((d) => d.day.slice(5));
+  const recvSeries = series.map((d) => d.received);
+  const latSeries = series.map((d) => d.avg_latency);
+  const valSeries = series.map((d) => d.approved_value);
+  const decided = (summary.approved || 0) + (summary.denied || 0) + (summary.escalated || 0);
+  const approvalRate = decided ? Math.round((summary.approved / decided) * 100) : 0;
+  const outcomeSplit = [
+    { k: 'Approved', v: summary.approved || 0, c: 'var(--ok)' },
+    { k: 'Denied', v: summary.denied || 0, c: 'var(--bad)' },
+    { k: 'Escalated', v: summary.escalated || 0, c: 'var(--warn)' },
+    { k: 'Pending', v: (summary.pending || 0) + (summary.processing || 0), c: 'var(--ink-4)' },
+  ];
+  const avgLatTxt = summary.avg_processing_seconds != null ? Number(summary.avg_processing_seconds).toFixed(1) : '—';
 
   return (
     <div className="app">
       <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
-      <Sidebar active={activeNav} onNav={setActiveNav} session={session} intakeCount={summary.received_24h ?? 0} />
+      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); }} session={session} intakeCount={summary.received_24h ?? 0} />
 
       <main className="main">
         {activeNav === 'intake' ? (
-          <section id="view-intake" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
-            <div className="split-top">
-              <div className="ro-banner" style={{ marginBottom: 16 }}>
-                <span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — you're signed in as a member. Operational data is visible; actions are disabled.
-              </div>
-              <div className="page-head">
-                <div>
-                  <h1 className="page-title" style={{ fontSize: 26 }}>Pre-Authorization</h1>
-                  <p className="page-sub" style={{ marginTop: 6 }}>
-                    <span className="cal" aria-hidden="true"><IconCal /></span>
-                    Live · {requests.length} recent requests
-                    {loading ? <span className="muted"> · loading…</span> : null}
-                  </p>
-                </div>
-                <div className="page-actions">
-                  <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconCopy /></button>
-                  <button className="btn primary" data-admin-only="">Export report</button>
-                </div>
-              </div>
+          <section id="view-intake">
+            <div className="ro-banner"><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — you're signed in as a member. Operational data is visible; actions are disabled.</div>
 
-              <div className="kpi-strip" style={{ marginTop: 20 }}>
-                <KpiTile label="Received 24h" val={(summary.received_24h ?? 0).toLocaleString()} sub={`${(summary.total ?? 0).toLocaleString()} total this period`} />
-                <KpiTile label="Approved" val={(summary.approved ?? 0).toLocaleString()} sub={<><b>{summary.total ? Math.round((summary.approved / summary.total) * 100) : 0}%</b> of decisions</>} />
-                <KpiTile label="Denied / Escalated" val={`${summary.denied ?? 0} / ${summary.escalated ?? 0}`} sub={`${summary.pending ?? 0} pending · ${summary.errors ?? 0} errors`} />
-                <KpiTile label="Approved value" val={fmtNGN(summary.total_amount_approved ?? 0)} sub="NGN authorized" />
-                <KpiTile label="Avg latency" val={(summary.avg_processing_seconds != null ? Number(summary.avg_processing_seconds).toFixed(1) : '—') + 's'} sub="vs ~30 min manual" />
+            <div className="page-head">
+              <div>
+                <h1 className="page-title">Pre-Authorization</h1>
+                <p className="page-sub">
+                  <span className="cal" aria-hidden="true"><IconCal /></span>
+                  Live · {summary.total ?? requests.length} requests this period
+                </p>
               </div>
-
-              <div className="toolbar" style={{ marginTop: 18 }}>
-                <div className="search">
-                  <IconSearch />
-                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, patient, provider, plan, item…" />
-                </div>
-                {statusFilters.map((s) => (
-                  <button key={s} className={`statbtn ${statusFilter === s ? 'on' : ''}`} onClick={() => setStatusFilter(s)}>
-                    {s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}
-                  </button>
-                ))}
+              <div className="page-actions">
+                <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconCopy /></button>
+                <button className="btn primary" data-admin-only="">Export report <IconExport /></button>
               </div>
             </div>
 
-            <div className="splitwrap">
-              <div className="split-list">
-                <div className="sl-head"><span>Request queue</span><span>{filtered.length} request{filtered.length === 1 ? '' : 's'}</span></div>
-                <div>
-                  {filtered.map((r) => (
-                    <QueueItem key={r.request_id} r={r} selected={selected?.request_id === r.request_id} onSelect={setSelectedId} />
-                  ))}
-                  {!filtered.length && (
-                    <div className="stub-empty" style={{ padding: '60px 24px' }}>
-                      <div className="ph">▤</div><h4>No requests</h4>
-                      <p>{error ? error : 'Incoming webhook requests will appear here after processing.'}</p>
+            <div className="tabs">
+              <button className={activeTab === 'dashboard' ? 'on' : ''} onClick={() => setActiveTab('dashboard')}>Dashboard</button>
+              <button className={activeTab === 'chat' ? 'on' : ''} onClick={() => setActiveTab('chat')}>Chat</button>
+            </div>
+
+            {activeTab === 'dashboard' ? (
+              <div id="tab-dashboard">
+                <div className="grid-2 section-gap" style={{ marginTop: 24 }}>
+                  <MetricCard
+                    title="Requests received"
+                    desc="Inbound pre-auth volume across the period"
+                    big={`${summary.received_24h ?? 0} <small>last 24h</small>`}
+                    chartHtml={chartBars(recvSeries, { accent: 'var(--ink-3)', labels: dayLabels })}
+                    moveH="Inbound volume"
+                    moveP={`${summary.total ?? 0} requests this period. ${summary.processing ?? 0} processing and ${summary.pending ?? 0} pending a first decision.`}
+                  />
+                  <MetricCard
+                    title="Decision outcomes"
+                    desc="How the AI pipeline resolved this period's requests"
+                    chartHtml={chartDonut(outcomeSplit)}
+                    moveH={`${approvalRate}% approval rate`}
+                    moveP={`${(summary.approved ?? 0).toLocaleString()} approved, ${summary.denied ?? 0} denied, ${summary.escalated ?? 0} escalated for human review.`}
+                  />
+                  <MetricCard
+                    title="Decision latency"
+                    desc="Time from received → decided"
+                    big={`${avgLatTxt}<small>s avg</small>`}
+                    chartHtml={chartLine(latSeries, { accent: 'var(--indigo)', suffix: 's' })}
+                    moveH="Seconds, not minutes"
+                    moveP={`Average decision latency is ${avgLatTxt}s versus a ~30-minute manual baseline.`}
+                  />
+                  <MetricCard
+                    title="PA value approved"
+                    desc="Total authorized value (NGN)"
+                    big={fmtNGN(summary.total_amount_approved ?? 0)}
+                    chartHtml={chartLine(valSeries, { accent: 'var(--ok)', prefix: '₦' })}
+                    moveH={`${fmtNGN(summary.total_amount_approved ?? 0)} authorized`}
+                    moveP="Authorized value across approved requests this period."
+                  />
+                </div>
+
+                <div className="section-gap" style={{ marginTop: 34 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+                    <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Request queue</h2>
+                    <span className="muted mono" style={{ fontSize: 12 }}>{filtered.length} request{filtered.length === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="toolbar" style={{ marginBottom: 14 }}>
+                    <div className="search">
+                      <IconSearch />
+                      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, patient, provider, plan, item, facility…" />
                     </div>
-                  )}
+                    {statusFilters.map((s) => (
+                      <button key={s} className={`statbtn ${statusFilter === s ? 'on' : ''}`} onClick={() => setStatusFilter(s)}>{s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}</button>
+                    ))}
+                  </div>
+                  <div className="queue">
+                    <QueueHead />
+                    <div>
+                      {filtered.map((r) => (
+                        <QueueRow key={r.request_id} r={r} selected={selected?.request_id === r.request_id && drawerOpen} onSelect={openRequest} />
+                      ))}
+                      {!filtered.length && (
+                        <div className="stub-empty" style={{ padding: '60px 24px' }}>
+                          <div className="ph">▤</div><h4>No requests</h4>
+                          <p>{error ? error : 'Incoming webhook requests will appear here after processing.'}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="split-detail" id="detail-pane">
-                <DetailView r={selected} />
+            ) : (
+              <div id="tab-chat" style={{ marginTop: 30 }}>
+                <div className="metric" style={{ maxWidth: 760 }}>
+                  <h3>Ask about this report</h3>
+                  <p className="desc">The assistant answers from this period's pre-auth queue and summary — decisions, denials, escalations, latency, value.</p>
+                  <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>Try asking</div>
+                    <div className="suggests" style={{ padding: 0 }}>
+                      <button type="button">Why were requests escalated this period?</button>
+                      <button type="button">Which denials were due to eligibility?</button>
+                      <button type="button">What's the total approved value and biggest single request?</button>
+                    </div>
+                    <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>Type your question in the bar at the bottom of the screen.</p>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </section>
         ) : (
-          <section id="view-stub" style={{ padding: '30px 40px 120px', overflow: 'auto' }}>
+          <section id="view-stub" style={{ paddingBottom: 120 }}>
             <StubView id={activeNav} session={session} />
           </section>
         )}
       </main>
 
-      <AskBar context={activeNav === 'intake' ? 'this request' : 'this view'} />
+      <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
+      <Drawer request={selected} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </div>
   );
 }
