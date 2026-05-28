@@ -486,3 +486,26 @@ body[data-layout="split"] .askbar-wrap { left: 260px; }
 .drawer.open { transform: translateX(0); }
 .drawer .dwrap { overflow: auto; padding: 26px 28px 40px; }
 .drawer .dclose { position: absolute; top: 18px; right: 18px; }
+
+/* ---- collapsible sidebar ---- */
+.app { transition: grid-template-columns .18s ease; }
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 8px 10px; }
+.side-head .idx-label { margin: 0; }
+.side-toggle { width: 26px; height: 26px; flex: none; border-radius: 6px; border: 1px solid var(--line-2); background: var(--bg); display: grid; place-items: center; color: var(--ink-3); transition: background .14s, color .14s, border-color .14s; }
+.side-toggle:hover { background: var(--bg-2); color: var(--ink); border-color: var(--line-3); }
+.nav-label { white-space: nowrap; overflow: hidden; }
+.askbar-wrap { transition: left .18s ease; }
+.app.collapsed { grid-template-columns: 64px 1fr; }
+.app.collapsed .side { padding: 20px 10px 16px; }
+.app.collapsed .side-head { justify-content: center; }
+.app.collapsed .side-head .idx-label { display: none; }
+.app.collapsed .navitem { justify-content: center; gap: 0; padding: 9px 0; }
+.app.collapsed .navitem .nav-label, .app.collapsed .navitem .soon-tag, .app.collapsed .navitem .ct { display: none; }
+.app.collapsed .nav-group > .grp { display: none; }
+.app.collapsed .side-foot .row { justify-content: center; padding: 6px 0; }
+.app.collapsed .side-foot .who { display: none; }
+.app.collapsed .askbar-wrap { left: 64px; }
+.side-brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.side-brand .brand-mark { width: 24px; height: 24px; border-radius: 6px; flex: none; display: block; }
+.side-brand .brand-name { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -.01em; white-space: nowrap; }
+.app.collapsed .side-brand { display: none; }

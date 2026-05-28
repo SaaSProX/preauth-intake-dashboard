@@ -518,26 +518,31 @@ function StatusBar({ session, role, onRole, refreshedLabel }) {
 }
 const NAV = [
   { id: 'intake', label: 'Pre-Auth Intake', live: true },
-  { id: 'health', label: 'Integration Health', live: false },
-  { id: 'audit', label: 'Audit Trail', live: false },
+  { id: 'health', label: 'Integration Health', live: true },
+  { id: 'audit', label: 'Audit Trail', live: true },
   { id: 'eligibility', label: 'Eligibility Checks', live: false },
   { id: 'support', label: 'Support', live: false },
 ];
 const NAV_ADMIN = [
-  { id: 'team', label: 'Team', live: false, lock: true },
-  { id: 'apikey', label: 'API Key', live: false, lock: true },
+  { id: 'team', label: 'Team', live: true, lock: true },
+  { id: 'apikey', label: 'API Key', live: true, lock: true },
 ];
-function Sidebar({ active, onNav, session, intakeCount }) {
+function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse }) {
   const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
   const item = (n) => (
-    <a key={n.id} className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`} href="#" onClick={(e) => { e.preventDefault(); onNav(n.id); }}>
-      <span className="gl" />{n.label}
+    <a key={n.id} className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`} href="#" title={collapsed ? n.label : undefined} onClick={(e) => { e.preventDefault(); onNav(n.id); }}>
+      <span className="gl" /><span className="nav-label">{n.label}</span>
       {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)}
     </a>
   );
   return (
     <aside className="side">
-      <div className="idx-label">Index</div>
+      <div className="side-head">
+        <span className="side-brand"><img src="/saaspro-mark.png" alt="SaaSPro" className="brand-mark" /><span className="brand-name">SaaSPro</span></span>
+        <button className="side-toggle" onClick={onToggleCollapse} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-label="Toggle sidebar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{collapsed ? <path d="M9 18l6-6-6-6" /> : <path d="M15 18l-6-6 6-6" />}</svg>
+        </button>
+      </div>
       {NAV.map(item)}
       <div className="nav-group" data-admin-only="">
         <div className="grp">Admin</div>
@@ -852,7 +857,7 @@ function Login({ email, setEmail, password, setPassword, onSubmit, error, loadin
     <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-2)', padding: 24 }}>
       <form onSubmit={onSubmit} style={{ width: 'min(380px, 100%)', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-card)', padding: '34px 30px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ width: 36, height: 36, borderRadius: 9, background: 'linear-gradient(135deg, var(--indigo), #8b6cf0)', color: '#fff', display: 'grid', placeItems: 'center', fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13 }}>SL</span>
+          <img src="/saaspro-mark.png" alt="SaaSPro Labs" style={{ width: 40, height: 40, borderRadius: 9, display: 'block' }} />
           <div>
             <p className="eyebrow" style={{ margin: 0 }}>Saaspro Labs</p>
             <h1 style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, margin: '2px 0 0' }}>Pre-Auth Operations</h1>
@@ -896,6 +901,8 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('intake');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [role, setRole] = useState('admin');
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('saaspro-sidebar-collapsed') === '1'; } catch { return false; } });
+  const toggleSidebar = () => setCollapsed((c) => { const n = !c; try { localStorage.setItem('saaspro-sidebar-collapsed', n ? '1' : '0'); } catch (e) { /* ignore */ } return n; });
   const [lastLoaded, setLastLoaded] = useState(null);
   const [health, setHealth] = useState(null);
   const [healthLoading, setHealthLoading] = useState(false);
@@ -1126,9 +1133,9 @@ export default function App() {
   const avgLatTxt = summary.avg_processing_seconds != null ? Number(summary.avg_processing_seconds).toFixed(1) : '—';
 
   return (
-    <div className="app">
+    <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
-      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} />
+      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} />
 
       <main className="main">
         {activeNav === 'intake' ? (
