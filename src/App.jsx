@@ -1,240 +1,629 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Activity,
-  Banknote,
-  CalendarDays,
-  ChevronRight,
-  ClipboardList,
-  Clock3,
-  FileJson,
-  Filter,
-  Headphones,
-  Inbox,
-  LogOut,
-  MessageSquare,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  UserCheck,
-} from 'lucide-react';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
 
 function normalizeApiBaseUrl(value) {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return 'http://localhost:8000';
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withScheme.replace(/\/+$/, '');
+  const t = String(value || '').trim();
+  if (!t) return 'http://localhost:8000';
+  const w = /^https?:\/\//i.test(t) ? t : `http://${t}`;
+  return w.replace(/\/+$/, '');
 }
 
+/* ============================================================
+   Formatting
+   ============================================================ */
+function fmtNGN(n) {
+  if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
+  n = Number(n);
+  if (n >= 1_000_000) return '₦' + (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 2) + 'm';
+  if (n >= 1_000) return '₦' + (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
+  return '₦' + n.toLocaleString();
+}
+function fmtNGNfull(n) {
+  return (n == null || n === '' || Number.isNaN(Number(n))) ? '—' : '₦' + Number(n).toLocaleString('en-NG');
+}
+function fmtSecs(s) {
+  if (s == null || s === '') return '—';
+  s = Number(s);
+  if (s < 60) return s.toFixed(1) + 's';
+  return (s / 60).toFixed(1) + 'm';
+}
 function parseApiDate(value) {
-  if (!value || value instanceof Date) return value;
+  if (!value) return null;
   const text = String(value);
   return /(?:z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`;
 }
-
-function formatDate(value) {
-  if (!value) return 'Not processed';
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(parseApiDate(value)));
+function timeAgo(value) {
+  if (!value) return '—';
+  const d = new Date(parseApiDate(value));
+  if (Number.isNaN(d.getTime())) return '—';
+  const min = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+  if (min < 1) return 'just now';
+  if (min < 60) return min + 'm ago';
+  const h = Math.floor(min / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
 }
-
-function formatDuration(seconds) {
-  if (seconds === null || seconds === undefined) return 'Pending';
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return `${minutes}m ${remaining}s`;
-}
-
-function formatMoney(value) {
-  if (value === null || value === undefined || value === '') return 'Not set';
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) return String(value);
-  return new Intl.NumberFormat('en-NG', {
-    style: 'currency',
-    currency: 'NGN',
-    maximumFractionDigits: 0,
-  }).format(numeric);
-}
-
-function toNumber(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function asArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function localDateKey(value) {
-  const date = value instanceof Date ? value : new Date(parseApiDate(value));
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function isToday(value) {
-  return value && localDateKey(value) === localDateKey(new Date());
-}
-
-function itemRequestedCost(item) {
-  if (!item || typeof item !== 'object') return 0;
-
-  const directAmount =
-    toNumber(item.requested_cost) ??
-    toNumber(item.estimated_cost) ??
-    toNumber(item.cost) ??
-    toNumber(item.amount);
-
-  if (directAmount !== null) return directAmount;
-
-  const unitCost = toNumber(item.unit_cost);
-  const quantity = toNumber(item.quantity) ?? 1;
-  return unitCost !== null ? unitCost * quantity : 0;
-}
-
-function requestItemsFromPayload(payload) {
-  if (!payload || typeof payload !== 'object') return [];
-
-  const paItems = asArray(payload.pa_items);
-  if (paItems.length) return paItems;
-
-  const submittedItems = asArray(payload.submission?.items_added);
-  if (submittedItems.length) return submittedItems;
-
-  const requestedItems = asArray(payload.requested_items);
-  if (requestedItems.length) return requestedItems;
-
-  const items = asArray(payload.items);
-  if (items.length) return items;
-
-  return asArray(payload.line_items);
-}
-
-function requestedAmountFromRequest(request) {
-  const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
-  const items = requestItemsFromPayload(payload);
-  const itemTotal = items.reduce((sum, item) => sum + itemRequestedCost(item), 0);
-
-  return (
-    itemTotal ||
-    toNumber(payload.total_requested_cost) ||
-    toNumber(request?.estimated_cost) ||
-    0
-  );
-}
-
-function providerLabel(value) {
+function fmtClock(value) {
   if (!value) return '';
-  if (typeof value === 'object') {
-    return value.name || value.role || value.email || JSON.stringify(value);
-  }
-  return String(value);
+  const d = new Date(parseApiDate(value));
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
-function enrichRequest(request) {
-  const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
-  const encounter = payload.encounter || {};
-  const policy = payload.policy || {};
-  const enrollee = payload.enrollee || {};
-  const items = requestItemsFromPayload(payload);
-  const firstItem = items[0] || {};
-  const patientName = [enrollee.first_name, enrollee.surname].filter(Boolean).join(' ');
-  const requestedAmount = requestedAmountFromRequest(request);
-  const itemLabel =
-    items.length > 1
-      ? `${items.length} requested items`
-      : firstItem.item_name || firstItem.description || request.item_description;
+const STATUS_META = {
+  approve: { label: 'Approve', cls: 'approve' },
+  deny: { label: 'Deny', cls: 'deny' },
+  escalate: { label: 'Escalate', cls: 'escalate' },
+  pending: { label: 'Pending', cls: 'pending' },
+  processing: { label: 'Processing', cls: 'processing' },
+  received: { label: 'Received', cls: 'received' },
+  error: { label: 'Error', cls: 'error' },
+};
+function normalizeStatus(v) {
+  const s = String(v || 'pending').toLowerCase();
+  if (s === 'approved') return 'approve';
+  if (['denied', 'reject', 'rejected'].includes(s)) return 'deny';
+  if (s === 'escalated') return 'escalate';
+  return STATUS_META[s] ? s : 'pending';
+}
+function planClass(p) {
+  const s = (p || '').toLowerCase();
+  if (s.includes('platinum')) return 'platinum';
+  if (s.includes('gold')) return 'gold';
+  if (s.includes('silver')) return 'silver';
+  if (s.includes('bronze')) return 'bronze';
+  return '';
+}
 
+/* ============================================================
+   Map the real /auth/preauth-dashboard request -> view model
+   ============================================================ */
+function asObj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+function asArr(v) { return Array.isArray(v) ? v : []; }
+
+function providerLabel(v) {
+  if (!v) return '';
+  if (typeof v === 'object') return v.name || v.role || v.email || '';
+  return String(v);
+}
+function itemsFromPayload(raw) {
+  const p = asObj(raw);
+  const list = asArr(p.pa_items).length ? p.pa_items
+    : asArr(p.submission?.items_added).length ? p.submission.items_added
+    : asArr(p.requested_items).length ? p.requested_items
+    : asArr(p.items).length ? p.items
+    : asArr(p.line_items);
+  return asArr(list).map((it) => ({
+    name: it.item_name || it.description || it.name || 'Item',
+    qty: Number(it.quantity) || 1,
+    unit: Number(it.unit_cost ?? it.requested_cost ?? it.cost ?? 0) || 0,
+  }));
+}
+function itemReqCost(it) {
+  const direct = Number(it.requested_cost ?? it.estimated_cost ?? it.cost ?? it.amount);
+  if (Number.isFinite(direct) && direct) return direct;
+  const unit = Number(it.unit_cost);
+  const qty = Number(it.quantity) || 1;
+  return Number.isFinite(unit) ? unit * qty : 0;
+}
+function requestedAmount(r, raw) {
+  const p = asObj(raw);
+  const items = asArr(p.pa_items).length ? p.pa_items : asArr(p.items);
+  const total = items.reduce((s, it) => s + itemReqCost(it), 0);
+  return total || Number(p.total_requested_cost) || Number(r.estimated_cost) || 0;
+}
+
+const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
+const STAGE_Q = {
+  Eligibility: 'Is the member valid — active, not expired, within age limit?',
+  'Plan & Coverage': 'Is the item covered, excluded, or in a waiting period?',
+  'Utilization & Limits': 'Does the cost fit under the benefit and annual cap?',
+  'Final Decision': 'Aggregate stages 1–3 → APPROVE / DENY / ESCALATE',
+};
+function deriveStages(r) {
+  const logs = asArr(r.agent_logs);
+  if (logs.length) {
+    return logs.map((l) => ({
+      n: l.agent_num,
+      name: l.agent_name || STAGE_NAMES[l.agent_num] || '',
+      status: l.status === 'pass' || l.status === 'fail' ? l.status : (l.status || 'pass'),
+      time: fmtClock(l.logged_at),
+      result: l.result,
+    }));
+  }
+  const ar = asObj(r.agent_result);
+  const out = [];
+  for (let i = 1; i <= 4; i++) {
+    const o = ar['agent' + i];
+    if (o && typeof o === 'object') {
+      let status = 'pass';
+      if (i !== 4) {
+        if (o.pass === false) status = 'fail';
+        else if (o.pass === true) status = 'pass';
+      }
+      out.push({ n: i, name: STAGE_NAMES[i], status, time: '', result: o });
+    }
+  }
+  return out;
+}
+
+function mapRequest(r) {
+  const raw = asObj(r.raw_payload);
+  const enc = asObj(raw.encounter);
+  const ar = asObj(r.agent_result);
+  const isLive = raw.event_type === 'pa.submitted';
+  let status = normalizeStatus(r.status);
+  if (isLive && !r.decision) status = 'received';
+  const items = itemsFromPayload(raw);
+  const diagnosis = asArr(enc.diagnosis).join(', ') || (typeof enc.diagnosis === 'string' ? enc.diagnosis : '—');
   return {
-    ...request,
-    display_request_id: encounter.checkin_id || request.request_id,
-    patient_id: enrollee.insurance_no || request.patient_id,
-    patient_name: patientName,
-    plan: policy.plan_name || policy.insurance_package || request.plan,
-    item_description: itemLabel,
-    estimated_cost: requestedAmount || request.estimated_cost,
-    requested_amount: requestedAmount,
-    line_item_count: items.length,
-    facility: encounter.facility_name || request.facility,
-    requesting_provider: providerLabel(request.requesting_provider) || providerLabel(payload.submission?.submitted_by),
+    request_id: r.request_id,
+    display_request_id: r.display_request_id || r.request_id,
+    patient_id: r.patient_id || '—',
+    patient_name: r.patient_name || '',
+    status,
+    decision: r.decision,
+    confidence: r.confidence || ar.confidence,
+    agent_step: r.agent_step,
+    plan: r.plan || '—',
+    item_type: r.item_type || '',
+    item_description: r.item_description || '—',
+    line_item_count: r.line_item_count || items.length,
+    requested_amount: requestedAmount(r, raw),
+    amount_approved: r.amount_approved ?? ar.amount_approved ?? null,
+    facility: r.facility || '—',
+    requesting_provider: providerLabel(r.requesting_provider) || '—',
+    processing_seconds: r.processing_seconds,
+    received_at: r.received_at,
+    received_label: timeAgo(r.received_at),
+    diagnosis,
+    checkin_type: enc.checkin_type || '—',
+    reason: r.reason || ar.reasoning || ar.denial_reason || ar.escalation_reason || '',
+    error_message: r.error_message,
+    flags: asArr(ar.flags),
+    items,
+    note: isLive ? 'Live HMO payload received. Automated decisioning is paused pending mapping validation for this corporation.' : '',
+    stages: deriveStages(r),
+    raw_payload: r.raw_payload,
+    extracted_fields: r.extracted_fields,
   };
 }
 
-function normalizeStatus(value) {
-  return String(value || 'pending').toLowerCase();
+function jsonPretty(obj) {
+  if (obj == null) return '<span style="color:#6b7385">null</span>';
+  let json;
+  try { json = JSON.stringify(obj, null, 2); } catch { return String(obj); }
+  return json
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"([^"]+)":/g, '<span class="k">"$1"</span>:')
+    .replace(/: "([^"]*)"/g, ': <span class="s">"$1"</span>')
+    .replace(/: (true|false)/g, ': <span class="b">$1</span>')
+    .replace(/: (-?\d[\d_]*\.?\d*)/g, ': <span class="n">$1</span>');
 }
 
-function statusClass(value) {
-  const status = normalizeStatus(value);
-  if (['approve', 'approved', 'pass'].includes(status)) return 'status success';
-  if (['deny', 'denied', 'reject', 'rejected', 'fail', 'error'].includes(status)) return 'status danger';
-  if (['escalate', 'escalated'].includes(status)) return 'status warning';
-  if (status === 'processing') return 'status info';
-  return 'status neutral';
+/* ============================================================
+   Small presentational pieces
+   ============================================================ */
+function Pill({ status }) {
+  const m = STATUS_META[status] || STATUS_META.pending;
+  return <span className={`pill ${m.cls}`}><span className="dot" />{m.label}</span>;
 }
-
-function prettyStatus(value) {
-  const status = normalizeStatus(value);
-  if (status === 'approve') return 'Approved';
-  if (status === 'deny') return 'Denied';
-  if (status === 'escalate') return 'Escalated';
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function isLiveAmanPayload(request) {
-  return request?.raw_payload?.event_type === 'pa.submitted';
-}
-
-function requestStatusLabel(request) {
-  return isLiveAmanPayload(request) ? 'Received' : prettyStatus(request?.status);
-}
-
-function requestStatusClass(request) {
-  return isLiveAmanPayload(request) ? 'status info' : statusClass(request?.status);
-}
-
-function resultSummary(result) {
-  if (!result || typeof result !== 'object') return 'No structured result captured yet.';
+function Conf({ level }) {
+  if (!level) return null;
   return (
-    result.reasoning ||
-    result.reason ||
-    result.denial_reason ||
-    result.escalation_reason ||
-    result.exclusion_detail ||
-    result.plan_restriction_detail ||
-    'Result captured.'
+    <span className={`conf ${String(level).toLowerCase()}`}>
+      <span className="bars"><i /><i /><i /></span><b>{level}</b> confidence
+    </span>
+  );
+}
+function PlanTag({ plan }) {
+  return <span className={`plan-tag ${planClass(plan)}`}>{plan}</span>;
+}
+function CodeBlock({ data, style }) {
+  return <div className="codeblock" style={style} dangerouslySetInnerHTML={{ __html: jsonPretty(data) }} />;
+}
+
+/* ============================================================
+   Queue list item (split layout)
+   ============================================================ */
+function QueueItem({ r, selected, onSelect }) {
+  const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
+  return (
+    <div className={`qitem ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
+      <div className="qi-top"><span className="qi-ref">{ref}</span><Pill status={r.status} /></div>
+      <div className="qi-name">
+        {r.patient_name || <span className="muted">Unnamed enrollee</span>}
+        <small>{r.patient_id}</small>
+      </div>
+      <div className="qi-meta">
+        <PlanTag plan={r.plan} /><span>{r.item_description}</span>
+        <span className="amt">{fmtNGN(r.requested_amount)}</span>
+      </div>
+    </div>
   );
 }
 
-function agentOutcome(log) {
-  const result = log?.result;
-  if (result && typeof result === 'object') {
-    if (result.pass === true) return 'pass';
-    if (result.pass === false) return 'fail';
-    if (result.decision) return result.decision;
+/* ============================================================
+   Detail view (decision + agent timeline + payload)
+   ============================================================ */
+function DecisionBlock({ r }) {
+  const cls = (STATUS_META[r.status] || STATUS_META.pending).cls;
+  const verdict = (r.decision || (STATUS_META[r.status] || STATUS_META.pending).label).toUpperCase();
+  let body;
+  if (r.error_message) {
+    body = <p className="reason">{r.error_message}</p>;
+  } else if (r.status === 'received') {
+    body = <p className="reason">{r.note}</p>;
+  } else if (!r.decision) {
+    const label = (STATUS_META[r.status] || STATUS_META.pending).label.toLowerCase();
+    body = <p className="reason">No decision yet — request is <b>{label}</b>{r.agent_step ? <> at the <b>{r.agent_step}</b> stage.</> : '.'}</p>;
+  } else {
+    body = (
+      <>
+        <p className="reason">{r.reason}</p>
+        {r.status === 'approve' && (
+          <div className="amt-line">
+            <div><span className="lab">Requested</span>{fmtNGNfull(r.requested_amount)}</div>
+            <div><span className="lab">Approved</span><b>{fmtNGNfull(r.amount_approved)}</b></div>
+          </div>
+        )}
+      </>
+    );
   }
-  return log?.status || 'pending';
+  return (
+    <div className={`decision ${cls}`}>
+      <div className="verdict-row"><span className="verdict">{verdict}</span><Pill status={r.status} /><Conf level={r.confidence} /></div>
+      {body}
+      {r.flags && r.flags.length > 0 && (
+        <div className="flags">{r.flags.map((f, i) => <span className="flag" key={i}>{f}</span>)}</div>
+      )}
+    </div>
+  );
+}
+function DetailsGrid({ r }) {
+  const cells = [
+    ['Enrollee', r.patient_name || 'Unnamed', false],
+    ['Insurance no.', r.patient_id, true],
+    ['Plan', r.plan, false],
+    ['Diagnosis', r.diagnosis, true],
+    ['Requested item', r.item_description, false],
+    ['Requested value', fmtNGNfull(r.requested_amount), true],
+    ['Line items', String(r.line_item_count || (r.items ? r.items.length : 0)), true],
+    ['Encounter', r.checkin_type, false],
+    ['Facility', r.facility, false],
+    ['Provider', r.requesting_provider, false],
+    ['Received', r.received_label, true],
+    ['Decision latency', fmtSecs(r.processing_seconds), true],
+  ];
+  return (
+    <div className="dgrid">
+      {cells.map(([l, v, mono], i) => (
+        <div className="cell" key={i}><div className="lab">{l}</div><div className={`val ${mono ? 'mono' : ''}`}>{v}</div></div>
+      ))}
+    </div>
+  );
+}
+function LineItems({ r }) {
+  if (!r.items || !r.items.length) return null;
+  return (
+    <div>
+      <div className="sec-h">Requested items <span className="n">{r.items.length}</span></div>
+      <div className="dgrid" style={{ gridTemplateColumns: '1fr 70px 130px' }}>
+        {r.items.map((it, i) => (
+          <React.Fragment key={i}>
+            <div className="cell"><div className="val">{it.name}</div></div>
+            <div className="cell"><div className="val mono">×{it.qty}</div></div>
+            <div className="cell" style={{ textAlign: 'right' }}><div className="val mono">{fmtNGNfull(it.unit * it.qty)}</div></div>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+function AgentTimeline({ r }) {
+  if (!r.stages || !r.stages.length) {
+    return (
+      <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>
+        Pipeline has not started for this request{r.status === 'received' ? ' — awaiting auto-decision.' : '.'}
+      </div>
+    );
+  }
+  return (
+    <div className="timeline">
+      {r.stages.map((s, i) => {
+        const cls = s.status === 'processing' ? 'skip' : s.status;
+        const node = s.status === 'pass' ? '✓' : s.status === 'fail' ? '✕' : s.n;
+        const statTxt = s.status === 'processing' ? 'running' : s.status;
+        return (
+          <div className={`stage ${cls}`} key={i}>
+            <div className="node">{node}</div>
+            <div className="s-top">
+              <span className="s-name">{s.n}. {s.name}</span>
+              <span className="s-stat">{statTxt}</span>
+              {s.time ? <span className="s-time">{s.time}</span> : null}
+            </div>
+            <p className="s-sum">{STAGE_Q[s.name] || ''}</p>
+            {s.result ? (
+              <div className="s-raw">
+                <details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function DetailView({ r }) {
+  if (!r) {
+    return (
+      <div className="stub-empty" style={{ paddingTop: 120 }}>
+        <div className="ph">▤</div>
+        <h4>Select a request</h4>
+        <p>Choose a request from the queue to see its decision, the full 4-agent reasoning timeline, and the raw payload.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="detail">
+      <div className="dhead">
+        <div>
+          <div className="dref">{r.display_request_id}</div>
+          <h2 className="dname">{r.patient_name || 'Unnamed enrollee'}</h2>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }} data-admin-only="">
+          <button className="btn sm">Override</button>
+          <button className="btn sm">Reassign</button>
+        </div>
+      </div>
+      <DecisionBlock r={r} />
+      <div><div className="sec-h">Request details</div><DetailsGrid r={r} /></div>
+      <LineItems r={r} />
+      <div>
+        <div className="sec-h">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
+        <AgentTimeline r={r} />
+      </div>
+      <div>
+        <div className="sec-h">Raw / extracted payload</div>
+        <details>
+          <summary style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--ink-3)', cursor: 'pointer' }}>View extracted_fields + raw_payload</summary>
+          <CodeBlock data={r.raw_payload || r.extracted_fields} style={{ marginTop: 10 }} />
+        </details>
+      </div>
+    </div>
+  );
 }
 
-function safeJson(value) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
+/* ============================================================
+   Chrome: status bar, sidebar, ask bar
+   ============================================================ */
+function StatusBar({ session, role, onRole, refreshedLabel }) {
+  const org = session.org_name || 'Organization';
+  const short = org.split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+  return (
+    <div className="statusbar">
+      <div className="sb-org"><span className="org-dot">{short}</span><b>{org}</b><span className="scope">org-scoped</span></div>
+      <div className="sb-refresh"><span className="spin" /> {refreshedLabel}</div>
+      <div className="sb-right">
+        <span className="roleswitch">
+          <button className={role === 'admin' ? 'on' : ''} onClick={() => onRole('admin')}>Admin</button>
+          <button className={role === 'member' ? 'on' : ''} onClick={() => onRole('member')}>Member</button>
+        </span>
+        <span className="live-toggle"><span className="led" /> Live</span>
+      </div>
+    </div>
+  );
 }
 
+const NAV = [
+  { id: 'intake', label: 'Pre-Auth Intake', live: true },
+  { id: 'health', label: 'Integration Health', live: false },
+  { id: 'audit', label: 'Audit Trail', live: false },
+  { id: 'eligibility', label: 'Eligibility Checks', live: false },
+  { id: 'support', label: 'Support', live: false },
+];
+const NAV_ADMIN = [
+  { id: 'team', label: 'Team', live: false, lock: true },
+  { id: 'apikey', label: 'API Key', live: false, lock: true },
+];
+function Sidebar({ active, onNav, session, intakeCount }) {
+  const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+  const item = (n) => (
+    <a
+      key={n.id}
+      className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`}
+      href="#"
+      onClick={(e) => { e.preventDefault(); onNav(n.id); }}
+    >
+      <span className="gl" />{n.label}
+      {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)}
+    </a>
+  );
+  return (
+    <aside className="side">
+      <div className="idx-label">Index</div>
+      {NAV.map(item)}
+      <div className="nav-group" data-admin-only="">
+        <div className="grp">Admin</div>
+        {NAV_ADMIN.map(item)}
+      </div>
+      <div className="side-foot">
+        <div className="row">
+          <span className="ava">{initials}</span>
+          <span className="who">{session.name}<small>{(session.role || 'member').toUpperCase()} · {session.org_name}</small></span>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function AskBar({ context }) {
+  const [q, setQ] = useState('');
+  return (
+    <div className="askbar-wrap">
+      <form className="askbar" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
+        <div className="suggests">
+          <button type="button" onClick={() => setQ('How many escalations today and why?')}>How many escalations today and why?</button>
+          <button type="button" onClick={() => setQ('Summarize denied requests')}>Summarize denied requests</button>
+          <button type="button" onClick={() => setQ('Average decision latency?')}>Average decision latency?</button>
+        </div>
+        <div className="ask-input">
+          <span className="caret">▌</span>
+          <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Ask me about ${context}…`} />
+          <span className="face">🫥</span>
+          <button className="ask-send" type="submit">Ask</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ============================================================
+   Stub module views (IA placeholders — not yet wired to data)
+   ============================================================ */
+function KpiTile({ label, val, sub }) {
+  return (
+    <div className="kpi">
+      <div className="k-label">{label}</div>
+      <div className="k-val tnum">{val}</div>
+      {sub ? <div className="k-sub">{sub}</div> : null}
+    </div>
+  );
+}
+function StubChannel({ title, sub, cols, note }) {
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">{title}</h1><span className="stub-badge">Module preview</span></div>
+      <p className="page-sub">{sub}</p>
+      <div className="stub-table">
+        <div className="sth" style={{ gridTemplateColumns: `repeat(${cols.length},1fr)` }}>
+          {cols.map((c) => <span key={c}>{c}</span>)}
+        </div>
+        <div className="stub-empty"><div className="ph">▦</div><h4>No items yet</h4><p>{note}</p></div>
+      </div>
+    </>
+  );
+}
+function StubView({ id, session }) {
+  const org = session.org_name || 'your organization';
+  if (id === 'health') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Integration Health</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Inbound webhook deliveries from <b>{org}</b> · connect to <span className="muted">/auth/webhook-delivery-logs</span></p>
+        <div className="stub-table"><div className="stub-empty"><div className="ph">◴</div><h4>Delivery health view</h4>
+          <p>The backend already exposes delivery summary + per-attempt logs (auth, payload validity, duplicates, latency). This view will surface them.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'audit') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Audit Trail</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Trace one event end-to-end: <span className="muted">delivery → stored request → agent decision</span></p>
+        <div className="stub-table"><div className="stub-empty"><div className="ph">⛓</div><h4>End-to-end trace</h4>
+          <p>Backed by /auth/webhook-audit-trail — search an event_id, checkin_id, or request_id to follow it across the pipeline.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'team') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Team</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Members & pending invites for <b>{org}</b></p>
+        <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — member role cannot invite or remove teammates.</div>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">⊞</div><h4>Team management</h4>
+          <p>Backed by /auth/team, /auth/invite-member, /auth/team-member — list members, invite by email, remove.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'apikey') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">API Key</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Credential the HMO uses to authenticate webhook deliveries · <b>{org}</b></p>
+        <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — only admins can generate or revoke keys.</div>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔑</div><h4>API key management</h4>
+          <p>Backed by /auth/api-key (generate / show-once / revoke). Used to onboard the client's webhook integration.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'eligibility') {
+    return <StubChannel title="Eligibility Checks" sub="Provider eligibility requests arriving via Email & WhatsApp" cols={['Source', 'Provider', 'Enrollee ID', 'Plan', 'Status', 'Received']} note="Eligibility intake is being wired up. Channel connectors (Email, WhatsApp) will land here as a live operational queue." />;
+  }
+  if (id === 'support') {
+    return <StubChannel title="Support" sub="Support conversations across Email, WhatsApp & Calls" cols={['Channel', 'Requester', 'Intent', 'Assigned to', 'Status', 'Last activity']} note="Support intake is being wired up. Conversations across channels will be triaged and assigned here." />;
+  }
+  return null;
+}
+
+/* ============================================================
+   Icons (inline, matching the prototype)
+   ============================================================ */
+const IconSearch = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--ink-3)' }}>
+    <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+  </svg>
+);
+const IconCal = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" />
+  </svg>
+);
+const IconCopy = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+  </svg>
+);
+
+/* ============================================================
+   Login
+   ============================================================ */
+function Login({ email, setEmail, password, setPassword, onSubmit, error, loading }) {
+  return (
+    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-2)', padding: 24 }}>
+      <form
+        onSubmit={onSubmit}
+        style={{
+          width: 'min(380px, 100%)', background: 'var(--bg)', border: '1px solid var(--line)',
+          borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-card)', padding: '34px 30px', display: 'flex',
+          flexDirection: 'column', gap: 16,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ width: 36, height: 36, borderRadius: 9, background: 'linear-gradient(135deg, var(--indigo), #8b6cf0)', color: '#fff', display: 'grid', placeItems: 'center', fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13 }}>SL</span>
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Saaspro Labs</p>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, margin: '2px 0 0' }}>Pre-Auth Operations</h1>
+          </div>
+        </div>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Email
+          <div className="search"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@example.com" autoComplete="email" required /></div>
+        </label>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Password
+          <div className="search"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" autoComplete="current-password" required /></div>
+        </label>
+        {error ? <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--bad-ink)', background: 'var(--bad-bg)', border: '1px solid var(--bad-line)', borderRadius: 8, padding: '8px 12px' }}>{error}</div> : null}
+        <button className="btn indigo" type="submit" disabled={loading} style={{ justifyContent: 'center' }}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+        <span className="eyebrow" style={{ textAlign: 'center' }}>Backend: {API_BASE_URL}</span>
+      </form>
+    </main>
+  );
+}
+
+/* ============================================================
+   App
+   ============================================================ */
 export default function App() {
   const [session, setSession] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : null;
+    const s = localStorage.getItem(STORAGE_KEY);
+    return s ? JSON.parse(s) : null;
   });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -246,10 +635,13 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [activeTab, setActiveTab] = useState('preauth');
+  const [activeNav, setActiveNav] = useState('intake');
+  const [role, setRole] = useState('admin');
+  const [lastLoaded, setLastLoaded] = useState(null);
+
+  useEffect(() => { document.body.dataset.layout = 'split'; return () => { delete document.body.dataset.layout; }; }, []);
+  useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
+  useEffect(() => { if (session) setRole(session.role || 'admin'); }, [session]);
 
   async function apiRequest(path, options = {}) {
     const headers = {
@@ -257,21 +649,17 @@ export default function App() {
       ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
       ...(options.headers || {}),
     };
-
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
-
     const text = await response.text();
     const data = text ? JSON.parse(text) : {};
-
     if (!response.ok) {
       const detail = data?.detail || data?.message || response.statusText;
       throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
     }
-
     return data;
   }
 
@@ -279,20 +667,12 @@ export default function App() {
     event.preventDefault();
     setLoginError('');
     setLoginLoading(true);
-
     try {
-      const data = await apiRequest('/auth/login', {
-        method: 'POST',
-        body: { email, password },
-      });
-      const nextSession = {
-        token: data.token,
-        role: data.role,
-        name: data.name,
-        org_name: data.org_name,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSession));
-      setSession(nextSession);
+      const data = await apiRequest('/auth/login', { method: 'POST', body: { email, password } });
+      const next = { token: data.token, role: data.role, name: data.name, org_name: data.org_name };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setSession(next);
+      setRole(next.role || 'admin');
       setEmail('');
       setPassword('');
     } catch (err) {
@@ -306,31 +686,17 @@ export default function App() {
     if (!session?.token) return;
     if (!silent) setLoading(true);
     setError('');
-
     try {
-      const params = new URLSearchParams();
-      if (dateFrom) params.set('date_from', dateFrom);
-      if (dateTo) params.set('date_to', dateTo);
-      const queryString = params.toString();
-      const data = await apiRequest(`/auth/preauth-dashboard${queryString ? `?${queryString}` : ''}`);
+      const data = await apiRequest('/auth/preauth-dashboard');
       setDashboard(data);
-      const requests = data?.requests || [];
-      setSelectedId((current) => {
-        if (current && requests.some((request) => request.request_id === current)) return current;
-        return requests[0]?.request_id || '';
-      });
+      setLastLoaded(Date.now());
     } catch (err) {
       if (/token expired/i.test(err.message || '')) {
         signOut();
         setLoginError('Session expired. Please sign in again.');
         return;
       }
-
-      setError(
-        err.message === 'Not Found'
-          ? 'Dashboard endpoint is not available yet. Restart the backend so the new route is loaded.'
-          : err.message || 'Could not load dashboard'
-      );
+      setError(err.message || 'Could not load dashboard');
     } finally {
       if (!silent) setLoading(false);
     }
@@ -343,531 +709,118 @@ export default function App() {
     setSelectedId('');
   }
 
+  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token]);
   useEffect(() => {
-    if (session?.token) {
-      loadDashboard();
-    }
-  }, [session?.token, dateFrom, dateTo]);
-
-  useEffect(() => {
-    if (!session?.token || !autoRefresh) return undefined;
-    const timer = window.setInterval(() => loadDashboard({ silent: true }), 15000);
-    return () => window.clearInterval(timer);
-  }, [session?.token, autoRefresh, dateFrom, dateTo]);
+    if (!session?.token) return undefined;
+    const t = setInterval(() => loadDashboard({ silent: true }), 15000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line
+  }, [session?.token]);
 
   const rawRequests = dashboard?.requests || [];
   const summary = dashboard?.summary || {};
-  const requests = useMemo(() => rawRequests.map(enrichRequest), [rawRequests]);
-  const todayRequests = useMemo(
-    () => requests.filter((request) => isToday(request.received_at)),
-    [requests]
-  );
-  const todayRequestedAmount = todayRequests.reduce((sum, request) => sum + (request.requested_amount || 0), 0);
-  const todayLineItems = todayRequests.reduce((sum, request) => sum + (request.line_item_count || 0), 0);
-  const avgTodayAmount = todayRequests.length ? todayRequestedAmount / todayRequests.length : 0;
-
-  const filteredRequests = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return requests.filter((request) => {
-      const status = normalizeStatus(request.status);
-      const matchesStatus = statusFilter === 'all' || status === statusFilter;
-      const searchable = [
-        request.request_id,
-        request.patient_id,
-        request.plan,
-        request.item_description,
-        request.facility,
-        providerLabel(request.requesting_provider),
-        request.patient_name,
-        request.decision,
-        request.status,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-
-      return matchesStatus && (!needle || searchable.includes(needle));
+  const requests = useMemo(() => rawRequests.map(mapRequest), [rawRequests]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return requests.filter((r) => {
+      const okS = statusFilter === 'all' || r.status === statusFilter;
+      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.decision]
+        .filter(Boolean).join(' ').toLowerCase();
+      return okS && (!q || blob.includes(q));
     });
   }, [requests, query, statusFilter]);
 
-  const selectedRequest = requests.find((request) => request.request_id === selectedId) || filteredRequests[0];
+  const selected = requests.find((r) => r.request_id === selectedId) || filtered[0] || null;
 
-  const moduleTabs = [
-    {
-      id: 'preauth',
-      label: 'Pre-Auth Intake',
-      detail: `${todayRequests.length || summary.received_24h || 0} today`,
-      icon: ClipboardList,
-    },
-    {
-      id: 'eligibility',
-      label: 'Eligibility Checks',
-      detail: '0 open',
-      icon: UserCheck,
-    },
-    {
-      id: 'support',
-      label: 'Support',
-      detail: '0 open',
-      icon: Headphones,
-    },
-  ];
-
-  const activeModule = moduleTabs.find((tab) => tab.id === activeTab) || moduleTabs[0];
-
-  const metrics = [
-    { label: 'Total requests', value: summary.total || 0, icon: ClipboardList, tone: 'plain' },
-    {
-      label: 'Received today',
-      value: todayRequests.length || summary.received_24h || 0,
-      icon: Activity,
-      tone: 'info',
-    },
-    {
-      label: "Today's PA value",
-      value: formatMoney(todayRequestedAmount),
-      icon: Banknote,
-      tone: 'money',
-    },
-    { label: 'Line items today', value: todayLineItems, icon: FileJson, tone: 'plain' },
-    { label: 'Avg value / PA', value: formatMoney(avgTodayAmount), icon: Banknote, tone: 'money' },
-    {
-      label: 'Avg time / PA',
-      value: formatDuration(summary.avg_processing_seconds ? Math.round(summary.avg_processing_seconds) : null),
-      icon: Clock3,
-      tone: 'plain',
-    },
-  ];
+  useEffect(() => {
+    if (filtered.length && !filtered.some((r) => r.request_id === selectedId)) {
+      setSelectedId(filtered[0].request_id);
+    }
+  }, [filtered, selectedId]);
 
   if (!session) {
-    return (
-      <main className="loginPage">
-        <form className="loginPanel" onSubmit={handleLogin}>
-          <div className="loginMark">SL</div>
-          <div>
-            <p className="eyebrow">Saaspro Labs</p>
-            <h1>Pre-Auth Operations</h1>
-          </div>
-
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="admin@example.com"
-              autoComplete="email"
-              required
-            />
-          </label>
-
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter password"
-              autoComplete="current-password"
-              required
-            />
-          </label>
-
-          {loginError && <div className="formError">{loginError}</div>}
-
-          <button className="primaryButton" type="submit" disabled={loginLoading}>
-            {loginLoading ? 'Signing in...' : 'Sign in'}
-          </button>
-
-          <span className="apiBase">Backend: {API_BASE_URL}</span>
-        </form>
-      </main>
-    );
+    return <Login email={email} setEmail={setEmail} password={password} setPassword={setPassword} onSubmit={handleLogin} error={loginError} loading={loginLoading} />;
   }
 
+  const refreshedLabel = loading ? 'Refreshing…' : (lastLoaded ? `Refreshed ${timeAgo(new Date(lastLoaded).toISOString())}` : 'Connecting…');
+  const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received'];
+
   return (
-    <div className="appShell">
-      <aside className="sidebar">
-        <div className="sidebarBrand">
-          <div className="brandMark">SL</div>
-          <div>
-            <p className="eyebrow">Saaspro Labs</p>
-            <h1>Operations Dashboard</h1>
-            <span>{session.org_name ? `${session.org_name} operations` : 'Insurance operations'}</span>
-          </div>
-        </div>
+    <div className="app">
+      <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
+      <Sidebar active={activeNav} onNav={setActiveNav} session={session} intakeCount={summary.received_24h ?? 0} />
 
-        <nav className="sidebarNav" aria-label="Operations modules">
-          {moduleTabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                className={`sidebarNavItem ${activeTab === tab.id ? 'active' : ''}`}
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="sidebarNavIcon">
-                  <Icon size={18} />
-                </span>
-                <span>{tab.label}</span>
-                <small>{tab.detail}</small>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="sidebarFooter">
-          <div className="userBlock">
-            <strong>{session.name}</strong>
-            <span>{session.role}</span>
-          </div>
-          <button className="iconButton fullWidth" type="button" onClick={() => loadDashboard()} title="Refresh dashboard">
-            <RefreshCw size={17} />
-            Refresh
-          </button>
-          <button className="iconButton muted fullWidth" type="button" onClick={signOut} title="Sign out">
-            <LogOut size={17} />
-            Sign out
-          </button>
-        </div>
-      </aside>
-
-      <main className="dashboardMain">
-        {error && <div className="bannerError">{error}</div>}
-
-        <section className="moduleSummary">
-          <div>
-            <span className="smallLabel">Active module</span>
-            <h2>{activeModule.label}</h2>
-          </div>
-          <span>
-            {activeTab === 'preauth'
-              ? `${formatMoney(todayRequestedAmount)} today`
-              : activeModule.detail}
-          </span>
-        </section>
-
-        {activeTab === 'preauth' && (
-          <>
-            <section className="metricsGrid" aria-label="Pre-auth metrics">
-              {metrics.map((metric) => {
-                const Icon = metric.icon;
-                return (
-                    <div className={`metricCard ${metric.tone}`} key={metric.label}>
-                      <div className="metricIcon">
-                        <Icon size={18} />
-                      </div>
-                      <span>{metric.label}</span>
-                      <strong>{metric.value}</strong>
-                    </div>
-                  );
-                })}
-            </section>
-
-            <section className="toolbar">
-              <div className="searchBox">
-                <Search size={17} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search request, patient, provider"
-                />
+      <main className="main">
+        {activeNav === 'intake' ? (
+          <section id="view-intake" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+            <div className="split-top">
+              <div className="ro-banner" style={{ marginBottom: 16 }}>
+                <span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — you're signed in as a member. Operational data is visible; actions are disabled.
               </div>
-              <label className="selectControl">
-                <Filter size={16} />
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                  <option value="all">All statuses</option>
-                  <option value="pending">Pending</option>
-                  <option value="processing">Processing</option>
-                  <option value="approve">Approved</option>
-                  <option value="deny">Denied</option>
-                  <option value="escalate">Escalated</option>
-                  <option value="error">Errors</option>
-                </select>
-              </label>
-              <label className="dateControl">
-                <CalendarDays size={16} />
-                <span>From</span>
-                <input
-                  type="date"
-                  value={dateFrom}
-                  max={dateTo || undefined}
-                  onChange={(event) => setDateFrom(event.target.value)}
-                />
-              </label>
-              <label className="dateControl">
-                <CalendarDays size={16} />
-                <span>To</span>
-                <input
-                  type="date"
-                  value={dateTo}
-                  min={dateFrom || undefined}
-                  onChange={(event) => setDateTo(event.target.value)}
-                />
-              </label>
-              {(dateFrom || dateTo) && (
-                <button
-                  className="iconButton compact"
-                  type="button"
-                  onClick={() => {
-                    setDateFrom('');
-                    setDateTo('');
-                  }}
-                >
-                  Clear dates
-                </button>
-              )}
-              <label className="refreshToggle">
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(event) => setAutoRefresh(event.target.checked)}
-                />
-                Auto-refresh
-              </label>
-            </section>
-
-            <section className="workbench">
-              <div className="requestsPanel">
-                <div className="panelHeader">
-                  <div>
-                    <h2>Requests</h2>
-                    <span>{filteredRequests.length} visible</span>
-                  </div>
-                  {loading && <span className="loadingText">Loading...</span>}
+              <div className="page-head">
+                <div>
+                  <h1 className="page-title" style={{ fontSize: 26 }}>Pre-Authorization</h1>
+                  <p className="page-sub" style={{ marginTop: 6 }}>
+                    <span className="cal" aria-hidden="true"><IconCal /></span>
+                    Live · {requests.length} recent requests
+                    {loading ? <span className="muted"> · loading…</span> : null}
+                  </p>
                 </div>
+                <div className="page-actions">
+                  <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconCopy /></button>
+                  <button className="btn primary" data-admin-only="">Export report</button>
+                </div>
+              </div>
 
-                <div className="requestList">
-                  {filteredRequests.map((request) => (
-                    <button
-                      className={`requestRow ${request.request_id === selectedRequest?.request_id ? 'active' : ''}`}
-                      key={request.request_id}
-                      type="button"
-                      onClick={() => setSelectedId(request.request_id)}
-                    >
-                      <div className="requestMain">
-                        <strong>{request.display_request_id || request.request_id}</strong>
-                        <span>{request.patient_name || request.patient_id}</span>
-                      </div>
-                      <div className="requestMeta">
-                        <span>{request.plan || 'No plan'}</span>
-                        <span>{request.item_description || 'No item'}</span>
-                        <strong>{formatMoney(request.requested_amount)}</strong>
-                      </div>
-                      <div className="requestStatusLine">
-                        <span className={requestStatusClass(request)}>{requestStatusLabel(request)}</span>
-                        <span className="timeChip">
-                          <Clock3 size={13} />
-                          {formatDuration(request.processing_seconds)}
-                        </span>
-                        <span>{formatDate(request.received_at)}</span>
-                        <ChevronRight size={16} />
-                      </div>
-                    </button>
+              <div className="kpi-strip" style={{ marginTop: 20 }}>
+                <KpiTile label="Received 24h" val={(summary.received_24h ?? 0).toLocaleString()} sub={`${(summary.total ?? 0).toLocaleString()} total this period`} />
+                <KpiTile label="Approved" val={(summary.approved ?? 0).toLocaleString()} sub={<><b>{summary.total ? Math.round((summary.approved / summary.total) * 100) : 0}%</b> of decisions</>} />
+                <KpiTile label="Denied / Escalated" val={`${summary.denied ?? 0} / ${summary.escalated ?? 0}`} sub={`${summary.pending ?? 0} pending · ${summary.errors ?? 0} errors`} />
+                <KpiTile label="Approved value" val={fmtNGN(summary.total_amount_approved ?? 0)} sub="NGN authorized" />
+                <KpiTile label="Avg latency" val={(summary.avg_processing_seconds != null ? Number(summary.avg_processing_seconds).toFixed(1) : '—') + 's'} sub="vs ~30 min manual" />
+              </div>
+
+              <div className="toolbar" style={{ marginTop: 18 }}>
+                <div className="search">
+                  <IconSearch />
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, patient, provider, plan, item…" />
+                </div>
+                {statusFilters.map((s) => (
+                  <button key={s} className={`statbtn ${statusFilter === s ? 'on' : ''}`} onClick={() => setStatusFilter(s)}>
+                    {s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="splitwrap">
+              <div className="split-list">
+                <div className="sl-head"><span>Request queue</span><span>{filtered.length} request{filtered.length === 1 ? '' : 's'}</span></div>
+                <div>
+                  {filtered.map((r) => (
+                    <QueueItem key={r.request_id} r={r} selected={selected?.request_id === r.request_id} onSelect={setSelectedId} />
                   ))}
-
-                  {!filteredRequests.length && (
-                    <div className="emptyState">
-                      <ClipboardList size={24} />
-                      <strong>No pre-auth requests yet</strong>
-                      <span>Incoming webhook requests will appear here after processing starts.</span>
+                  {!filtered.length && (
+                    <div className="stub-empty" style={{ padding: '60px 24px' }}>
+                      <div className="ph">▤</div><h4>No requests</h4>
+                      <p>{error ? error : 'Incoming webhook requests will appear here after processing.'}</p>
                     </div>
                   )}
                 </div>
               </div>
-
-              <RequestDetail request={selectedRequest} />
-            </section>
-          </>
-        )}
-
-        {activeTab === 'eligibility' && (
-          <EmptyModule
-            icon={UserCheck}
-            title="Eligibility Checks"
-            channels={['Email', 'WhatsApp']}
-            columns={['Source', 'Provider', 'Enrollee ID', 'Plan', 'Status', 'Received']}
-            emptyTitle="No eligibility checks yet"
-            emptyText="Provider eligibility requests will appear here."
-          />
-        )}
-
-        {activeTab === 'support' && (
-          <EmptyModule
-            icon={MessageSquare}
-            title="Support"
-            channels={['Email', 'WhatsApp', 'Calls']}
-            columns={['Channel', 'Requester', 'Intent', 'Assigned to', 'Status', 'Last activity']}
-            emptyTitle="No support conversations yet"
-            emptyText="Customer and provider support conversations will appear here."
-          />
-        )}
-      </main>
-    </div>
-  );
-}
-
-function EmptyModule({ icon: Icon, title, channels, columns, emptyTitle, emptyText }) {
-  return (
-    <section className="emptyModule">
-      <div className="moduleHeader">
-        <div>
-          <span className="smallLabel">Module</span>
-          <h2>{title}</h2>
-        </div>
-        <div className="channelPills">
-          {channels.map((channel) => (
-            <span key={channel}>{channel}</span>
-          ))}
-        </div>
-      </div>
-
-      <div className="emptyModuleBody">
-        <div className="emptyModuleIcon">
-          <Icon size={26} />
-        </div>
-        <strong>{emptyTitle}</strong>
-        <span>{emptyText}</span>
-      </div>
-
-      <div className="emptyTable">
-        <div className="emptyTableHead">
-          {columns.map((column) => (
-            <span key={column}>{column}</span>
-          ))}
-        </div>
-        <div className="emptyTableRow">
-          <Inbox size={18} />
-          <span>No records</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function RequestDetail({ request }) {
-  if (!request) {
-    return (
-      <aside className="detailPanel emptyDetail">
-        <ShieldCheck size={28} />
-        <strong>Select a request</strong>
-        <span>Decision details and agent logs will appear here.</span>
-      </aside>
-    );
-  }
-
-  const agentLogs = request.agent_logs || [];
-
-  return (
-    <aside className="detailPanel">
-      <div className="detailHeader">
-        <div>
-          <span className="smallLabel">Selected request</span>
-          <h2>{request.display_request_id || request.request_id}</h2>
-        </div>
-        <span className={requestStatusClass(request)}>{requestStatusLabel(request)}</span>
-      </div>
-
-      <div className="decisionBlock">
-        <div className="decisionTopline">
-          <span>{isLiveAmanPayload(request) ? 'Intake captured' : request.decision || request.agent_step || 'Pending decision'}</span>
-          {!isLiveAmanPayload(request) && request.confidence && <strong>{request.confidence} confidence</strong>}
-        </div>
-        <p>
-          {isLiveAmanPayload(request)
-            ? 'Live AMAN PA payload received. Decision automation is paused until the real payload mapping is fully validated.'
-            : request.reason || 'The agent has not produced a final reason yet.'}
-        </p>
-      </div>
-
-      <dl className="detailGrid">
-        <div>
-          <dt>Patient</dt>
-          <dd>{request.patient_name ? `${request.patient_name} · ${request.patient_id}` : request.patient_id}</dd>
-        </div>
-        <div>
-          <dt>Plan</dt>
-          <dd>{request.plan || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Requested item</dt>
-          <dd>{request.item_description || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Requested value</dt>
-          <dd>{formatMoney(request.requested_amount ?? request.estimated_cost)}</dd>
-        </div>
-        <div>
-          <dt>Line items</dt>
-          <dd>{request.line_item_count || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Facility</dt>
-          <dd>{request.facility || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Provider</dt>
-          <dd>{providerLabel(request.requesting_provider) || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Received</dt>
-          <dd>{formatDate(request.received_at)}</dd>
-        </div>
-        <div>
-          <dt>Time per PA</dt>
-          <dd>{formatDuration(request.processing_seconds)}</dd>
-        </div>
-      </dl>
-
-      <div className="sectionHeader">
-        <div>
-          <h3>Agent Timeline</h3>
-          <span>{agentLogs.length} logs captured</span>
-        </div>
-      </div>
-
-      <div className="timeline">
-        {agentLogs.map((log) => {
-          const outcome = agentOutcome(log);
-          return (
-            <div className="timelineItem" key={`${log.agent_num}-${log.logged_at}`}>
-              <div className="timelineBadge">{log.agent_num}</div>
-              <div className="timelineBody">
-                <div className="timelineTitle">
-                  <strong>{log.agent_name}</strong>
-                  <span className={statusClass(outcome)}>{prettyStatus(outcome)}</span>
-                </div>
-                <p>{resultSummary(log.result)}</p>
-                <span className="timestamp">{formatDate(log.logged_at)}</span>
-                <details className="jsonDetails">
-                  <summary>
-                    <FileJson size={15} />
-                    Result JSON
-                  </summary>
-                  <pre>{safeJson(log.result)}</pre>
-                </details>
+              <div className="split-detail" id="detail-pane">
+                <DetailView r={selected} />
               </div>
             </div>
-          );
-        })}
-
-        {!agentLogs.length && (
-          <div className="emptyState compact">
-            <Clock3 size={22} />
-            <strong>No agent logs yet</strong>
-            <span>The request may still be pending or processing.</span>
-          </div>
+          </section>
+        ) : (
+          <section id="view-stub" style={{ padding: '30px 40px 120px', overflow: 'auto' }}>
+            <StubView id={activeNav} session={session} />
+          </section>
         )}
-      </div>
+      </main>
 
-      <details className="payloadDetails">
-        <summary>
-          <FileJson size={16} />
-          Extracted payload
-        </summary>
-        <pre>{safeJson(request.extracted_fields || request.raw_payload)}</pre>
-      </details>
-    </aside>
+      <AskBar context={activeNav === 'intake' ? 'this request' : 'this view'} />
+    </div>
   );
 }
