@@ -644,6 +644,127 @@ function HealthView({ data, loading, error, org }) {
 }
 
 /* ============================================================
+   Audit Trail (wired to /auth/webhook-audit-trail)
+   ============================================================ */
+function AuditView({ data, loading, error, query, setQuery, onTrace }) {
+  const traces = (data && data.traces) || [];
+  const t = traces[0];
+  const nodes = [];
+  if (t) {
+    const dl = t.delivery || {};
+    const pa = t.preauth || {};
+    const ag = t.agent || {};
+    const deliveryOk = dl.auth_status === 'auth_success' && (dl.http_status_returned ? dl.http_status_returned < 400 : true);
+    nodes.push({ st: deliveryOk ? 'pass' : 'fail', name: 'Webhook delivery', sum: [dl.auth_status, dl.payload_status, dl.processing_time_ms != null ? dl.processing_time_ms + 'ms' : null].filter(Boolean).join(' · '), time: dl.received_at ? fmtClock(dl.received_at) : '' });
+    nodes.push({ st: pa.request_id ? 'pass' : 'skip', name: 'Request stored', sum: pa.request_id ? `${pa.request_id} · status ${pa.status || '—'}` : 'not stored', time: pa.received_at ? fmtClock(pa.received_at) : '' });
+    asArr(ag.agent_logs).forEach((l) => nodes.push({ st: l.status === 'pass' || l.status === 'fail' ? l.status : 'pass', name: l.agent_name || STAGE_NAMES[l.agent_num] || 'Stage', sum: STAGE_Q[l.agent_name] || '', time: l.logged_at ? fmtClock(l.logged_at) : '' }));
+    if (pa.decision) {
+      const dst = pa.decision === 'APPROVE' ? 'pass' : pa.decision === 'DENY' ? 'fail' : 'skip';
+      nodes.push({ st: dst, name: `Outcome — ${pa.decision}`, sum: asObj(ag.agent_result).confidence ? `${asObj(ag.agent_result).confidence} confidence recorded` : 'Decision recorded', time: pa.processed_at ? fmtClock(pa.processed_at) : '' });
+    }
+  }
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Audit Trail</h1></div>
+      <p className="page-sub">Trace one event end-to-end: <span className="muted">delivery → stored request → agent decision</span></p>
+      <div className="toolbar section-gap">
+        <div className="search" style={{ maxWidth: 420 }}>
+          <span className="muted mono" style={{ fontSize: 12 }}>trace</span>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onTrace(); }} placeholder="event_id · checkin_id · request_id" />
+        </div>
+        <button className="btn indigo" onClick={onTrace}>Trace event</button>
+      </div>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      {loading ? <div className="muted section-gap" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>Loading…</div>
+        : !t ? <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">⛓</div><h4>No trace found</h4><p>Search an event_id, checkin_id, or request_id to follow it across the pipeline.</p></div></div>
+          : (
+            <>
+              <p className="page-sub section-gap" style={{ marginTop: 18 }}>Tracing <b>{t.delivery?.checkin_id || t.preauth?.request_id || t.delivery?.event_id}</b>{traces.length > 1 ? <span className="muted"> · {traces.length} matches, showing latest</span> : null}</p>
+              <div className="timeline section-gap" style={{ maxWidth: 680, marginTop: 14 }}>
+                {nodes.map((n, i) => (
+                  <div className={`stage ${n.st}`} key={i}>
+                    <div className="node">{n.st === 'pass' ? '✓' : n.st === 'fail' ? '✕' : (i + 1)}</div>
+                    <div className="s-top"><span className="s-name">{n.name}</span><span className="s-stat">{n.st}</span>{n.time ? <span className="s-time">{n.time}</span> : null}</div>
+                    <p className="s-sum">{n.sum}</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+    </>
+  );
+}
+
+/* ============================================================
+   Team (wired to /auth/team, /auth/invite-member, /auth/team-member)
+   ============================================================ */
+function TeamView({ data, loading, error, notice, isAdmin, org, inviteEmail, setInviteEmail, inviting, onInvite, onRemove }) {
+  const members = (data && data.members) || [];
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Team</h1></div>
+      <p className="page-sub">Members & pending invites for <b>{org}</b></p>
+      {isAdmin ? (
+        <div className="toolbar section-gap" data-admin-only="">
+          <div className="search" style={{ maxWidth: 360 }}><span className="muted mono" style={{ fontSize: 12 }}>invite</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onInvite(); }} placeholder="teammate@org.com" /></div>
+          <button className="btn indigo" onClick={onInvite} disabled={inviting}>{inviting ? 'Sending…' : 'Send invite'}</button>
+        </div>
+      ) : (
+        <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — member role cannot invite or remove teammates.</div>
+      )}
+      {notice ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {notice}</div> : null}
+      {error ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      <div className="queue section-gap" style={{ marginTop: 18 }}>
+        <div className="qhead" style={{ gridTemplateColumns: '1.4fr 1.6fr 100px 110px 90px' }}><span>Member</span><span>Email</span><span>Role</span><span>Status</span><span /></div>
+        {members.map((m) => (
+          <div className="qrow" key={m.email} style={{ gridTemplateColumns: '1.4fr 1.6fr 100px 110px 90px', cursor: 'default' }}>
+            <div className="pt"><span className="ava" style={{ display: 'inline-grid', width: 22, height: 22, borderRadius: '50%', background: 'var(--indigo)', color: '#fff', placeItems: 'center', fontFamily: 'var(--mono)', fontSize: 10, marginRight: 8, verticalAlign: 'middle' }}>{(m.name || m.email).split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase()}</span>{m.name}</div>
+            <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>{m.email}</div>
+            <div><span className="plan-tag">{m.role}</span></div>
+            <div><span className={`pill ${m.status === 'active' ? 'approve' : 'escalate'}`}><span className="dot" />{m.status}</span></div>
+            <div style={{ textAlign: 'right' }} data-admin-only="">{isAdmin && m.can_delete ? <button className="btn sm" onClick={() => onRemove(m.email)}>Remove</button> : null}</div>
+          </div>
+        ))}
+        {!members.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">⊞</div><h4>{loading ? 'Loading…' : 'No members yet'}</h4></div>}
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   API Key (wired to /auth/api-key + generate/revoke)
+   ============================================================ */
+function ApiKeyView({ data, loading, error, notice, isAdmin, org, revealed, busy, onGenerate, onRevoke }) {
+  const has = !!(data && data.has_api_key);
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">API Key</h1></div>
+      <p className="page-sub">Credential the HMO uses to authenticate webhook deliveries · <b>{org}</b></p>
+      {!isAdmin ? <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — only admins can generate or revoke keys.</div> : null}
+      {notice ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {notice}</div> : null}
+      {error ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      <div className="metric section-gap" style={{ maxWidth: 620, marginTop: 20 }}>
+        <h3>{has || revealed ? 'Active key' : 'No active key'}</h3>
+        <p className="desc">{revealed ? 'Copy this now — the full key will not be shown again.' : has ? 'Shown masked. The full key is displayed once, on generation.' : 'Generate a key to authenticate this org’s webhook deliveries.'}</p>
+        {(revealed || has) ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, background: revealed ? 'var(--ok-bg)' : 'var(--bg-2)', border: `1px solid ${revealed ? 'var(--ok-line)' : 'var(--line)'}`, borderRadius: 9, padding: '13px 16px', fontFamily: 'var(--mono)', fontSize: 13 }}>
+            <span style={{ flex: 1, wordBreak: 'break-all' }}>{revealed || data.masked_api_key || '••••••••••••'}</span>
+            <span className={`pill ${revealed ? 'approve' : 'approve'}`}><span className="dot" />{revealed ? 'new' : 'active'}</span>
+          </div>
+        ) : null}
+        {has && data.created_at ? <div className="muted mono" style={{ fontSize: 11.5, marginTop: 10 }}>Created {timeAgo(data.created_at)}</div> : null}
+        {isAdmin ? (
+          <div style={{ display: 'flex', gap: 10, marginTop: 18 }} data-admin-only="">
+            <button className="btn" onClick={onGenerate} disabled={busy}>{busy ? 'Working…' : (has ? 'Regenerate (show once)' : 'Generate key')}</button>
+            {has ? <button className="btn" style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} onClick={onRevoke} disabled={busy}>Revoke</button> : null}
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
    Stub module views (IA placeholders — not yet wired to data)
    ============================================================ */
 function StubChannel({ title, sub, cols, note }) {
@@ -779,6 +900,21 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState('');
+  const [audit, setAudit] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [auditQuery, setAuditQuery] = useState('');
+  const [team, setTeam] = useState(null);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState('');
+  const [teamNotice, setTeamNotice] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [apikey, setApikey] = useState(null);
+  const [apikeyError, setApikeyError] = useState('');
+  const [apikeyNotice, setApikeyNotice] = useState('');
+  const [apikeyBusy, setApikeyBusy] = useState(false);
+  const [revealedKey, setRevealedKey] = useState('');
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -858,6 +994,73 @@ export default function App() {
     }
   }
 
+  async function loadAudit(q) {
+    if (!session?.token) return;
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const params = new URLSearchParams();
+      const v = (q ?? auditQuery).trim();
+      if (v) { if (v.includes('/')) params.set('checkin_id', v); else params.set('request_id', v); }
+      const data = await apiRequest(`/auth/webhook-audit-trail?${params.toString()}`);
+      setAudit(data);
+    } catch (err) { setAuditError(err.message || 'Could not load audit trail'); }
+    finally { setAuditLoading(false); }
+  }
+  async function loadTeam() {
+    if (!session?.token) return;
+    setTeamLoading(true);
+    setTeamError('');
+    try { setTeam(await apiRequest('/auth/team')); }
+    catch (err) { setTeamError(err.message || 'Could not load team'); }
+    finally { setTeamLoading(false); }
+  }
+  async function inviteMember() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviting(true); setTeamError(''); setTeamNotice('');
+    try {
+      const res = await apiRequest('/auth/invite-member', { method: 'POST', body: { email } });
+      setTeamNotice(res.message || `Invite created for ${email}`);
+      setInviteEmail('');
+      await loadTeam();
+    } catch (err) { setTeamError(err.message || 'Invite failed'); }
+    finally { setInviting(false); }
+  }
+  async function removeMember(email) {
+    setTeamError(''); setTeamNotice('');
+    try {
+      const res = await apiRequest(`/auth/team-member/${encodeURIComponent(email)}`, { method: 'DELETE' });
+      setTeamNotice(res.message || `Removed ${email}`);
+      await loadTeam();
+    } catch (err) { setTeamError(err.message || 'Remove failed'); }
+  }
+  async function loadApiKey() {
+    if (!session?.token) return;
+    setApikeyError('');
+    try { setApikey(await apiRequest('/auth/api-key')); }
+    catch (err) { setApikeyError(err.message || 'Could not load API key'); }
+  }
+  async function generateKey() {
+    setApikeyBusy(true); setApikeyError(''); setApikeyNotice('');
+    try {
+      const res = await apiRequest('/auth/api-key/generate', { method: 'POST' });
+      setRevealedKey(res.api_key || '');
+      setApikeyNotice(res.message || 'API key generated');
+      await loadApiKey();
+    } catch (err) { setApikeyError(err.message || 'Generate failed'); }
+    finally { setApikeyBusy(false); }
+  }
+  async function revokeKey() {
+    setApikeyBusy(true); setApikeyError(''); setApikeyNotice(''); setRevealedKey('');
+    try {
+      const res = await apiRequest('/auth/api-key', { method: 'DELETE' });
+      setApikeyNotice(res.message || 'API key revoked');
+      await loadApiKey();
+    } catch (err) { setApikeyError(err.message || 'Revoke failed'); }
+    finally { setApikeyBusy(false); }
+  }
+
   function signOut() {
     localStorage.removeItem(STORAGE_KEY);
     setSession(null);
@@ -875,7 +1078,11 @@ export default function App() {
   }, [session?.token]);
 
   useEffect(() => {
-    if (session?.token && activeNav === 'health' && !health) loadHealth();
+    if (!session?.token) return;
+    if (activeNav === 'health' && !health) loadHealth();
+    if (activeNav === 'audit' && !audit) loadAudit('');
+    if (activeNav === 'team' && !team) loadTeam();
+    if (activeNav === 'apikey' && !apikey) loadApiKey();
     // eslint-disable-next-line
   }, [session?.token, activeNav]);
 
@@ -921,7 +1128,7 @@ export default function App() {
   return (
     <div className="app">
       <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
-      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); }} session={session} intakeCount={summary.received_24h ?? 0} />
+      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} />
 
       <main className="main">
         {activeNav === 'intake' ? (
@@ -1033,8 +1240,10 @@ export default function App() {
           </section>
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
-            {activeNav === 'health'
-              ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
+            {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
+              : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
+              : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
+              : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} />
               : <StubView id={activeNav} session={session} />}
           </section>
         )}
