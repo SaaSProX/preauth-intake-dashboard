@@ -982,12 +982,12 @@ function RequestDetail({ request, events = [], eventsLoading = false, eventsErro
               <div className="timelineBadge">{sequence || '?'}</div>
               <div className="timelineBody">
                 <div className="timelineTitle">
-                  <strong>{sequence <= 1 ? 'Initial submission' : 'Additional items'}</strong>
+                  <strong>{sequence <= 1 ? 'First captured event' : 'Additional items'}</strong>
                   <span className="status info">{formatMoney(eventValue(event))}</span>
                 </div>
                 <div className="eventMetaGrid">
                   <span>{eventItemCount(event)} line item{eventItemCount(event) === 1 ? '' : 's'}</span>
-                  <span>Current PA total: {formatMoney(event.total_requested_cost)}</span>
+                  <span>Current PA snapshot: {formatMoney(event.total_requested_cost)}</span>
                   <span>{formatDate(event.submitted_at || event.occurred_at || event.created_at)}</span>
                 </div>
                 <div className="eventItems">
