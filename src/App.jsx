@@ -200,6 +200,74 @@ function requestStatusClass(request) {
   return isLiveAmanPayload(request) ? 'status info' : statusClass(request?.status);
 }
 
+function eventValue(event) {
+  return toNumber(event?.items_added_total) ?? toNumber(event?.total_requested_cost) ?? 0;
+}
+
+function eventItemCount(event) {
+  return toNumber(event?.items_added_count) ?? toNumber(event?.item_count) ?? 0;
+}
+
+function closeNumberMatch(left, right) {
+  const leftNumber = toNumber(left);
+  const rightNumber = toNumber(right);
+  return leftNumber !== null && rightNumber !== null && Math.abs(leftNumber - rightNumber) < 0.01;
+}
+
+function itemsAddedFromEvent(event) {
+  const payload = event?.raw_payload && typeof event.raw_payload === 'object' ? event.raw_payload : {};
+  const addedItems = asArray(payload.submission?.items_added);
+  const paItems = asArray(payload.pa_items);
+  const usedItemKeys = new Set();
+
+  if (addedItems.length) {
+    return addedItems.map((item, index) => {
+      const id = item?.id;
+      const candidates = paItems
+        .map((paItem, paIndex) => ({ paItem, paIndex }))
+        .filter(({ paItem, paIndex }) => {
+          const key = paItem?.claim_item_id || `${paItem?.facility_tariff_item_id || 'item'}-${paIndex}`;
+          if (usedItemKeys.has(key)) return false;
+          return (
+            String(paItem?.facility_tariff_item_id || '') === String(id || '') ||
+            String(paItem?.claim_item_id || '') === String(id || '')
+          );
+        })
+        .sort((left, right) => {
+          const score = ({ paItem }) => {
+            const quantityMatches = closeNumberMatch(paItem?.quantity, item?.quantity);
+            const amountMatches = closeNumberMatch(paItem?.requested_cost, item?.requested_cost);
+            const isPending = normalizeStatus(paItem?.status) === 'pending';
+            if (quantityMatches && amountMatches && isPending) return 0;
+            if (quantityMatches && amountMatches) return 1;
+            if (isPending) return 2;
+            return 3;
+          };
+          return score(left) - score(right);
+        });
+      const matchedItem = candidates[0]?.paItem;
+      const matchedKey = matchedItem?.claim_item_id || (
+        matchedItem ? `${matchedItem?.facility_tariff_item_id || 'item'}-${candidates[0]?.paIndex}` : null
+      );
+      if (matchedKey) usedItemKeys.add(matchedKey);
+
+      return {
+        id: matchedItem?.claim_item_id || `${event?.event_id || 'event'}-${index}-${id || 'item'}`,
+        name: matchedItem?.item_name || matchedItem?.description || matchedItem?.name || `Item ${id || index + 1}`,
+        quantity: item?.quantity ?? matchedItem?.quantity ?? 1,
+        requested_cost: toNumber(item?.requested_cost) ?? itemRequestedCost(matchedItem || item),
+      };
+    });
+  }
+
+  return paItems.map((item, index) => ({
+    id: item?.claim_item_id || item?.facility_tariff_item_id || `${event?.event_id || 'event'}-${index}`,
+    name: item?.item_name || item?.description || item?.name || `Item ${index + 1}`,
+    quantity: item?.quantity ?? 1,
+    requested_cost: itemRequestedCost(item),
+  }));
+}
+
 function resultSummary(result) {
   if (!result || typeof result !== 'object') return 'No structured result captured yet.';
   return (
@@ -250,6 +318,9 @@ export default function App() {
   const [dateTo, setDateTo] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [activeTab, setActiveTab] = useState('preauth');
+  const [requestEvents, setRequestEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState('');
 
   async function apiRequest(path, options = {}) {
     const headers = {
@@ -362,9 +433,20 @@ export default function App() {
     () => requests.filter((request) => isToday(request.received_at)),
     [requests]
   );
-  const todayRequestedAmount = todayRequests.reduce((sum, request) => sum + (request.requested_amount || 0), 0);
-  const todayLineItems = todayRequests.reduce((sum, request) => sum + (request.line_item_count || 0), 0);
-  const avgTodayAmount = todayRequests.length ? todayRequestedAmount / todayRequests.length : 0;
+  const todaySnapshotAmount = todayRequests.reduce((sum, request) => sum + (request.requested_amount || 0), 0);
+  const todaySnapshotLineItems = todayRequests.reduce((sum, request) => sum + (request.line_item_count || 0), 0);
+  const hasDateFilter = Boolean(dateFrom || dateTo);
+  const displayedRequestCount = hasDateFilter
+    ? (toNumber(summary.unique_pa_count) ?? requests.length)
+    : (toNumber(summary.today_unique_pa_count) ?? todayRequests.length ?? summary.received_24h ?? 0);
+  const displayedPaValue = hasDateFilter
+    ? (toNumber(summary.intake_value) ?? todaySnapshotAmount)
+    : (toNumber(summary.today_intake_value) ?? todaySnapshotAmount);
+  const displayedLineItems = hasDateFilter
+    ? (toNumber(summary.added_line_items) ?? todaySnapshotLineItems)
+    : (toNumber(summary.today_added_line_items) ?? todaySnapshotLineItems);
+  const allTimePaValue = toNumber(summary.all_time_intake_value) ?? toNumber(summary.intake_value) ?? 0;
+  const avgDisplayedAmount = displayedRequestCount ? displayedPaValue / displayedRequestCount : 0;
 
   const filteredRequests = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -392,11 +474,53 @@ export default function App() {
 
   const selectedRequest = requests.find((request) => request.request_id === selectedId) || filteredRequests[0];
 
+  useEffect(() => {
+    if (!session?.token || activeTab !== 'preauth' || !selectedRequest) {
+      setRequestEvents([]);
+      setEventsError('');
+      setEventsLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadRequestEvents() {
+      setEventsLoading(true);
+      setEventsError('');
+
+      try {
+        const params = new URLSearchParams();
+        params.set('checkin_id', selectedRequest.display_request_id || selectedRequest.request_id);
+        params.set('include_payload', 'true');
+        params.set('limit', '25');
+        const data = await apiRequest(`/auth/preauth-events?${params.toString()}`);
+        if (!cancelled) {
+          const events = asArray(data?.events).sort(
+            (a, b) => (toNumber(a.event_sequence) || 0) - (toNumber(b.event_sequence) || 0)
+          );
+          setRequestEvents(events);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRequestEvents([]);
+          setEventsError(err.message || 'Could not load PA event history');
+        }
+      } finally {
+        if (!cancelled) setEventsLoading(false);
+      }
+    }
+
+    loadRequestEvents();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token, activeTab, selectedRequest?.request_id, selectedRequest?.display_request_id]);
+
   const moduleTabs = [
     {
       id: 'preauth',
       label: 'Pre-Auth Intake',
-      detail: `${todayRequests.length || summary.received_24h || 0} today`,
+      detail: `${displayedRequestCount || 0} ${hasDateFilter ? 'selected' : 'today'}`,
       icon: ClipboardList,
     },
     {
@@ -418,19 +542,20 @@ export default function App() {
   const metrics = [
     { label: 'Total requests', value: summary.total || 0, icon: ClipboardList, tone: 'plain' },
     {
-      label: 'Received today',
-      value: todayRequests.length || summary.received_24h || 0,
+      label: hasDateFilter ? 'Selected PAs' : 'Received today',
+      value: displayedRequestCount || 0,
       icon: Activity,
       tone: 'info',
     },
     {
-      label: "Today's PA value",
-      value: formatMoney(todayRequestedAmount),
+      label: hasDateFilter ? 'Selected PA value' : "Today's PA value",
+      value: formatMoney(displayedPaValue),
       icon: Banknote,
       tone: 'money',
     },
-    { label: 'Line items today', value: todayLineItems, icon: FileJson, tone: 'plain' },
-    { label: 'Avg value / PA', value: formatMoney(avgTodayAmount), icon: Banknote, tone: 'money' },
+    { label: 'All-time PA value', value: formatMoney(allTimePaValue), icon: Banknote, tone: 'money' },
+    { label: hasDateFilter ? 'Selected line items' : 'Line items today', value: displayedLineItems || 0, icon: FileJson, tone: 'plain' },
+    { label: 'Avg value / PA', value: formatMoney(avgDisplayedAmount), icon: Banknote, tone: 'money' },
     {
       label: 'Avg time / PA',
       value: formatDuration(summary.avg_processing_seconds ? Math.round(summary.avg_processing_seconds) : null),
@@ -543,7 +668,7 @@ export default function App() {
           </div>
           <span>
             {activeTab === 'preauth'
-              ? `${formatMoney(todayRequestedAmount)} today`
+              ? `${formatMoney(displayedPaValue)} ${hasDateFilter ? 'selected' : 'today'}`
               : activeModule.detail}
           </span>
         </section>
@@ -677,7 +802,12 @@ export default function App() {
                 </div>
               </div>
 
-              <RequestDetail request={selectedRequest} />
+              <RequestDetail
+                request={selectedRequest}
+                events={requestEvents}
+                eventsLoading={eventsLoading}
+                eventsError={eventsError}
+              />
             </section>
           </>
         )}
@@ -746,7 +876,7 @@ function EmptyModule({ icon: Icon, title, channels, columns, emptyTitle, emptyTe
   );
 }
 
-function RequestDetail({ request }) {
+function RequestDetail({ request, events = [], eventsLoading = false, eventsError = '' }) {
   if (!request) {
     return (
       <aside className="detailPanel emptyDetail">
@@ -803,6 +933,16 @@ function RequestDetail({ request }) {
           <dd>{request.line_item_count || 'Not provided'}</dd>
         </div>
         <div>
+          <dt>Event history</dt>
+          <dd>
+            {request.event_count ? `${request.event_count} event${request.event_count === 1 ? '' : 's'}` : 'Not captured'}
+          </dd>
+        </div>
+        <div>
+          <dt>Latest addition</dt>
+          <dd>{request.latest_items_added_total ? formatMoney(request.latest_items_added_total) : 'None'}</dd>
+        </div>
+        <div>
           <dt>Facility</dt>
           <dd>{request.facility || 'Not provided'}</dd>
         </div>
@@ -819,6 +959,67 @@ function RequestDetail({ request }) {
           <dd>{formatDuration(request.processing_seconds)}</dd>
         </div>
       </dl>
+
+      <div className="sectionHeader">
+        <div>
+          <h3>PA Event Timeline</h3>
+          <span>
+            {eventsLoading
+              ? 'Loading history'
+              : `${events.length || request.event_count || 0} event${(events.length || request.event_count || 0) === 1 ? '' : 's'} captured`}
+          </span>
+        </div>
+      </div>
+
+      {eventsError && <div className="eventError">{eventsError}</div>}
+
+      <div className="timeline eventTimeline">
+        {events.map((event) => {
+          const sequence = toNumber(event.event_sequence) || 0;
+          const eventItems = itemsAddedFromEvent(event);
+          return (
+            <div className="timelineItem" key={event.event_id || event.id}>
+              <div className="timelineBadge">{sequence || '?'}</div>
+              <div className="timelineBody">
+                <div className="timelineTitle">
+                  <strong>{sequence <= 1 ? 'Initial submission' : 'Additional items'}</strong>
+                  <span className="status info">{formatMoney(eventValue(event))}</span>
+                </div>
+                <div className="eventMetaGrid">
+                  <span>{eventItemCount(event)} line item{eventItemCount(event) === 1 ? '' : 's'}</span>
+                  <span>Current PA total: {formatMoney(event.total_requested_cost)}</span>
+                  <span>{formatDate(event.submitted_at || event.occurred_at || event.created_at)}</span>
+                </div>
+                <div className="eventItems">
+                  {eventItems.map((item) => (
+                    <div className="eventItemRow" key={item.id}>
+                      <span>{item.name}</span>
+                      <small>Qty {item.quantity}</small>
+                      <strong>{formatMoney(item.requested_cost)}</strong>
+                    </div>
+                  ))}
+                  {!eventItems.length && <span className="mutedInline">No item details captured for this event.</span>}
+                </div>
+                <details className="jsonDetails">
+                  <summary>
+                    <FileJson size={15} />
+                    Event JSON
+                  </summary>
+                  <pre>{safeJson(event.raw_payload || event.payload_summary || event)}</pre>
+                </details>
+              </div>
+            </div>
+          );
+        })}
+
+        {!events.length && !eventsLoading && !eventsError && (
+          <div className="emptyState compact">
+            <Clock3 size={22} />
+            <strong>No event history yet</strong>
+            <span>This request was captured before event tracking or the backend has not returned events.</span>
+          </div>
+        )}
+      </div>
 
       <div className="sectionHeader">
         <div>
