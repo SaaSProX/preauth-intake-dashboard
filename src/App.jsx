@@ -217,7 +217,9 @@ function closeNumberMatch(left, right) {
 function itemsAddedFromEvent(event) {
   const payload = event?.raw_payload && typeof event.raw_payload === 'object' ? event.raw_payload : {};
   const addedItems = asArray(payload.submission?.items_added);
-  const paItems = asArray(payload.pa_items);
+  const paItems = asArray(payload.pa_items).length
+    ? asArray(payload.pa_items)
+    : asArray(event?.extracted_fields?.items);
   const usedItemKeys = new Set();
 
   if (addedItems.length) {
@@ -228,20 +230,33 @@ function itemsAddedFromEvent(event) {
         .filter(({ paItem, paIndex }) => {
           const key = paItem?.claim_item_id || `${paItem?.facility_tariff_item_id || 'item'}-${paIndex}`;
           if (usedItemKeys.has(key)) return false;
+          const quantityMatches = closeNumberMatch(paItem?.quantity, item?.quantity);
+          const amountMatches = closeNumberMatch(paItem?.requested_cost, item?.requested_cost);
           return (
             String(paItem?.facility_tariff_item_id || '') === String(id || '') ||
-            String(paItem?.claim_item_id || '') === String(id || '')
+            String(paItem?.claim_item_id || '') === String(id || '') ||
+            (quantityMatches && amountMatches) ||
+            (paIndex === index && addedItems.length === paItems.length)
           );
         })
         .sort((left, right) => {
-          const score = ({ paItem }) => {
+          const score = ({ paItem, paIndex }) => {
+            const idMatches =
+              String(paItem?.facility_tariff_item_id || '') === String(id || '') ||
+              String(paItem?.claim_item_id || '') === String(id || '');
             const quantityMatches = closeNumberMatch(paItem?.quantity, item?.quantity);
             const amountMatches = closeNumberMatch(paItem?.requested_cost, item?.requested_cost);
+            const orderMatches = paIndex === index && addedItems.length === paItems.length;
             const isPending = normalizeStatus(paItem?.status) === 'pending';
-            if (quantityMatches && amountMatches && isPending) return 0;
-            if (quantityMatches && amountMatches) return 1;
-            if (isPending) return 2;
-            return 3;
+            if (idMatches && quantityMatches && amountMatches && isPending) return 0;
+            if (idMatches && quantityMatches && amountMatches) return 1;
+            if (quantityMatches && amountMatches && orderMatches && isPending) return 2;
+            if (quantityMatches && amountMatches && orderMatches) return 3;
+            if (quantityMatches && amountMatches && isPending) return 4;
+            if (quantityMatches && amountMatches) return 5;
+            if (orderMatches && isPending) return 6;
+            if (orderMatches) return 7;
+            return 8;
           };
           return score(left) - score(right);
         });
