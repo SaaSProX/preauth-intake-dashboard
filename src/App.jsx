@@ -183,11 +183,29 @@ function itemsFromPayload(raw) {
     : asArr(p.requested_items).length ? p.requested_items
     : asArr(p.items).length ? p.items
     : asArr(p.line_items);
-  return asArr(list).map((it) => ({
-    name: it.item_name || it.description || it.name || 'Item',
-    qty: Number(it.quantity) || 1,
-    unit: Number(it.unit_cost ?? it.requested_cost ?? it.cost ?? 0) || 0,
-  }));
+  return asArr(list).map((it) => {
+    const itm = asObj(it);
+    return {
+      name: itm.item_name || itm.description || itm.name || 'Item',
+      qty: Number(itm.quantity) || 1,
+      unit: Number(itm.unit_cost ?? itm.requested_cost ?? itm.cost ?? 0) || 0,
+      item_status: itm.status || null,
+      requested_cost: itm.requested_cost ?? null,
+      approved_cost: itm.approved_cost ?? null,
+      unit_approved_cost: itm.unit_approved_cost ?? null,
+      pricing_source: itm.pricing_source || null,
+      category_id: itm.category_id ?? null,
+      claim_item_id: itm.claim_item_id ?? null,
+      tariff_id: itm.facility_tariff_item_id ?? null,
+      type: itm.type || itm.category || null,
+      code: itm.code || itm.service_code || itm.cpt || null,
+      facility: itm.facility || itm.facility_name || null,
+      provider: itm.requesting_provider || itm.provider || null,
+      diagnosis: itm.diagnosis || itm.indication || null,
+      flags: itm.flags || null,
+      raw: itm,
+    };
+  });
 }
 function itemReqCost(it) {
   const direct = Number(it.requested_cost ?? it.estimated_cost ?? it.cost ?? it.amount);
@@ -274,6 +292,7 @@ function mapRequest(r) {
     stages: deriveStages(r),
     raw_payload: r.raw_payload,
     extracted_fields: r.extracted_fields,
+    patient_pa_count: r.patient_pa_count || 0,
   };
 }
 function jsonPretty(obj) {
@@ -340,7 +359,19 @@ function QueueRow({ r, selected, onSelect }) {
   return (
     <div className={`qrow ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
       <div className="ref">{ref}<small>{r.checkin_type} · {r.item_type || '—'}</small></div>
-      <div className="pt">{r.patient_name || <span className="muted">Unnamed enrollee</span>}<small>{r.patient_id}</small></div>
+      <div className="pt">
+        {r.patient_name || <span className="muted">Unnamed enrollee</span>}
+        {r.patient_pa_count > 1 ? (
+          <span
+            className="mono"
+            title={`${r.patient_pa_count} PAs from this patient`}
+            style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)', fontSize: 10.5, fontWeight: 600, verticalAlign: 'middle' }}
+          >
+            {r.patient_pa_count}× PAs
+          </span>
+        ) : null}
+        <small>{r.patient_id}</small>
+      </div>
       <div className="plan"><PlanTag plan={r.plan} /></div>
       <div className="item" title={r.item_description}>{r.item_description}{r.line_item_count > 1 ? <span className="muted"> ·{r.line_item_count}</span> : ''}</div>
       <div className="amt">{fmtNGN(r.requested_amount)}</div>
@@ -409,14 +440,59 @@ function LineItems({ r }) {
   return (
     <div>
       <div className="sec-h">Requested items <span className="n">{r.items.length}</span></div>
-      <div className="dgrid" style={{ gridTemplateColumns: '1fr 70px 130px' }}>
-        {r.items.map((it, i) => (
-          <React.Fragment key={i}>
-            <div className="cell"><div className="val">{it.name}</div></div>
-            <div className="cell"><div className="val mono">×{it.qty}</div></div>
-            <div className="cell" style={{ textAlign: 'right' }}><div className="val mono">{fmtNGNfull(it.unit * it.qty)}</div></div>
-          </React.Fragment>
-        ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+        {r.items.map((it, i) => {
+          const total = it.unit * it.qty;
+          const approved = Number(it.approved_cost) || 0;
+          const hasApprovedField = it.approved_cost != null;
+          return (
+            <details key={i} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9 }}>
+              <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: '1fr 60px 130px 16px', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+                <div style={{ fontSize: 13 }}>{it.name}</div>
+                <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>×{it.qty}</div>
+                <div className="mono" style={{ fontSize: 12, textAlign: 'right' }}>{fmtNGNfull(total)}</div>
+                <div style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 10, textAlign: 'right' }}>▾</div>
+              </summary>
+              <div style={{ padding: '12px 14px 14px', borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: '120px 1fr', rowGap: 6, columnGap: 12, fontSize: 12, fontFamily: 'var(--mono)' }}>
+                <div className="muted">Unit cost</div><div>{fmtNGNfull(it.unit)}</div>
+                <div className="muted">Quantity</div><div>{it.qty}</div>
+                <div className="muted">Requested</div><div>{fmtNGNfull(total)}</div>
+                <div className="muted">Approved</div><div>{hasApprovedField ? (approved > 0 ? fmtNGNfull(approved) : '₦0 (not approved at item level)') : '—'}</div>
+                {it.item_status ? <><div className="muted">Item status</div><div>{it.item_status}</div></> : null}
+                {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
+                {it.category_id != null ? <><div className="muted">Category</div><div>#{it.category_id}</div></> : null}
+                {it.code ? <><div className="muted">Code</div><div>{it.code}</div></> : null}
+                {it.diagnosis ? <><div className="muted">Diagnosis</div><div>{String(it.diagnosis)}</div></> : null}
+                {it.provider ? <><div className="muted">Provider</div><div>{providerLabel(it.provider) || JSON.stringify(it.provider)}</div></> : null}
+                {it.facility ? <><div className="muted">Facility</div><div>{it.facility}</div></> : null}
+                {it.flags && (it.flags.active_count || it.flags.highest_severity) ? (
+                  <>
+                    <div className="muted">Flags</div>
+                    <div>
+                      {it.flags.active_count ? <span style={{ marginRight: 10 }}>active: {it.flags.active_count}</span> : null}
+                      {it.flags.highest_severity ? <span>severity: {it.flags.highest_severity}</span> : null}
+                    </div>
+                  </>
+                ) : null}
+                {(it.claim_item_id || it.tariff_id) ? (
+                  <>
+                    <div className="muted">IDs</div>
+                    <div>
+                      {it.claim_item_id ? <span style={{ marginRight: 10 }}>claim: {it.claim_item_id}</span> : null}
+                      {it.tariff_id ? <span>tariff: {it.tariff_id}</span> : null}
+                    </div>
+                  </>
+                ) : null}
+                <div style={{ gridColumn: '1 / -1', marginTop: 6 }}>
+                  <details>
+                    <summary style={{ cursor: 'pointer', color: 'var(--ink-3)', fontSize: 11 }}>Raw item JSON</summary>
+                    <CodeBlock data={it.raw} />
+                  </details>
+                </div>
+              </div>
+            </details>
+          );
+        })}
       </div>
     </div>
   );
