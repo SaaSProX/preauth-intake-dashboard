@@ -532,7 +532,10 @@ const NAV_ADMIN = [
   { id: 'team', label: 'Team', live: true, lock: true },
   { id: 'apikey', label: 'API Key', live: true, lock: true },
 ];
-function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse }) {
+const NAV_PLATFORM = [
+  { id: 'onboarding', label: 'Onboarding', live: true, lock: true },
+];
+function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse, isSuperAdmin }) {
   const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
   const item = (n) => (
     <a key={n.id} className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`} href="#" title={collapsed ? n.label : undefined} onClick={(e) => { e.preventDefault(); onNav(n.id); }}>
@@ -553,6 +556,12 @@ function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleColla
         <div className="grp">Admin</div>
         {NAV_ADMIN.map(item)}
       </div>
+      {isSuperAdmin && (
+        <div className="nav-group">
+          <div className="grp">Platform</div>
+          {NAV_PLATFORM.map(item)}
+        </div>
+      )}
       <div className="side-foot">
         <div className="row">
           <span className="ava">{initials}</span>
@@ -775,6 +784,95 @@ function ApiKeyView({ data, loading, error, notice, isAdmin, org, revealed, busy
 }
 
 /* ============================================================
+   Onboarding (SaaSPro super-admin: cross-org platform view)
+   ============================================================ */
+function OnboardingView({ data, loading, error, isSuperAdmin, orgName, setOrgName, adminEmail, setAdminEmail, onCreate, creating, created, createError, onResetCreate }) {
+  if (!isSuperAdmin) {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Onboarding</h1></div>
+        <p className="page-sub">Platform-only view.</p>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔒</div><h4>Not available</h4><p>Only admins of the SaaSPro platform org can onboard new client organizations.</p></div></div>
+      </>
+    );
+  }
+  const orgs = (data && data.orgs) || [];
+  const totalMembers = orgs.reduce((a, o) => a + (o.members || 0), 0);
+  const totalRequests = orgs.reduce((a, o) => a + (o.requests || 0), 0);
+  const totalPending = orgs.reduce((a, o) => a + (o.pending_invites || 0), 0);
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Onboarding</h1></div>
+      <p className="page-sub">Manage client organizations · <span className="muted">platform-only view</span></p>
+      <div className="kpi-strip section-gap" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <KpiTile label="Client organizations" val={orgs.length.toLocaleString()} sub={`${totalPending} pending invites`} />
+        <KpiTile label="Total members" val={totalMembers.toLocaleString()} sub="across all orgs" />
+        <KpiTile label="Total PA requests" val={totalRequests.toLocaleString()} sub="all-time" />
+      </div>
+      <div className="grid-2 section-gap">
+        <div className="metric">
+          <h3>Create a client organization</h3>
+          <p className="desc">Spin up a new org and invite its first admin. They receive a registration link (email if Resend is configured).</p>
+          <form onSubmit={(e) => { e.preventDefault(); onCreate(); }} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              Organization name
+              <div className="search"><input value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="Aman HMO" required /></div>
+            </label>
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              First admin email
+              <div className="search"><input type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="admin@client.com" required /></div>
+            </label>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn indigo" type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create org + invite admin'}</button>
+              {created ? <button className="btn" type="button" onClick={onResetCreate}>New</button> : null}
+            </div>
+          </form>
+          {createError ? <div className="ro-banner" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {createError}</div> : null}
+          {created ? (
+            <div className="ro-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="led" style={{ background: 'var(--ok)' }} />Created <b style={{ marginLeft: 4 }}>{created.org.name}</b>{created.invite.email_sent ? '. Invite emailed to ' : '. Email not sent — share this invite link with '}<b style={{ marginLeft: 4 }}>{created.invite.email}</b>:</div>
+              <div className="codeblock" style={{ width: '100%', fontSize: 11.5, padding: '10px 12px', wordBreak: 'break-all' }}>{created.invite.invite_link}</div>
+            </div>
+          ) : null}
+        </div>
+        <div className="metric">
+          <h3>How this works</h3>
+          <p className="desc">Members and admins live inside a single client org. SaaSPro super-admins (admins of the platform org) can spin up new client orgs and invite their first admin from here — no CLI required.</p>
+          <ol style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.7, marginTop: 12, paddingLeft: 18 }}>
+            <li>Create the org and the first admin's invite.</li>
+            <li>The admin opens the link, sets a password, signs in.</li>
+            <li>They invite their team and generate the webhook API key.</li>
+          </ol>
+        </div>
+      </div>
+      <div className="section-gap" style={{ marginTop: 30 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Client organizations</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>{orgs.length} org{orgs.length === 1 ? '' : 's'}</span>
+        </div>
+        {error ? <div className="ro-banner" style={{ display: 'flex', background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)', marginBottom: 14 }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+        <div className="queue">
+          <div className="qhead" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px' }}>
+            <span>Organization</span><span>Members</span><span>Pending</span><span>API keys</span><span>Requests</span><span>Last activity</span>
+          </div>
+          {orgs.map((o) => (
+            <div className="qrow" key={o.id} style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px', cursor: 'default' }}>
+              <div className="pt"><b>{o.name}</b><small>{o.is_active ? 'active' : 'disabled'}</small></div>
+              <div className="mono" style={{ fontSize: 12 }}>{(o.members || 0).toLocaleString()}</div>
+              <div>{o.pending_invites > 0 ? <span className="pill escalate"><span className="dot" />{o.pending_invites}</span> : <span className="muted mono" style={{ fontSize: 12 }}>—</span>}</div>
+              <div className="mono" style={{ fontSize: 12 }}>{(o.api_keys || 0).toLocaleString()}</div>
+              <div className="mono" style={{ fontSize: 12 }}>{(o.requests || 0).toLocaleString()}</div>
+              <div className="muted mono" style={{ fontSize: 12 }}>{o.last_activity ? timeAgo(o.last_activity) : 'never'}</div>
+            </div>
+          ))}
+          {!orgs.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">⊞</div><h4>{loading ? 'Loading…' : 'No organizations yet'}</h4></div>}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
    Stub module views (IA placeholders — not yet wired to data)
    ============================================================ */
 function StubChannel({ title, sub, cols, note }) {
@@ -927,6 +1025,14 @@ export default function App() {
   const [apikeyNotice, setApikeyNotice] = useState('');
   const [apikeyBusy, setApikeyBusy] = useState(false);
   const [revealedKey, setRevealedKey] = useState('');
+  const [orgs, setOrgs] = useState(null);
+  const [orgsLoading, setOrgsLoading] = useState(false);
+  const [orgsError, setOrgsError] = useState('');
+  const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgAdminEmail, setNewOrgAdminEmail] = useState('');
+  const [creatingOrg, setCreatingOrg] = useState(false);
+  const [createdOrg, setCreatedOrg] = useState(null);
+  const [createOrgError, setCreateOrgError] = useState('');
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -1073,6 +1179,32 @@ export default function App() {
     finally { setApikeyBusy(false); }
   }
 
+  async function loadOrgs() {
+    if (!session?.token) return;
+    setOrgsLoading(true);
+    setOrgsError('');
+    try { setOrgs(await apiRequest('/auth/onboarding/orgs')); }
+    catch (err) { setOrgsError(err.message || 'Could not load organizations'); }
+    finally { setOrgsLoading(false); }
+  }
+  async function createOrg() {
+    const name = newOrgName.trim();
+    const email = newOrgAdminEmail.trim();
+    if (!name || !email) return;
+    setCreatingOrg(true);
+    setCreateOrgError('');
+    setCreatedOrg(null);
+    try {
+      const data = await apiRequest('/auth/onboarding/create-org', { method: 'POST', body: { org_name: name, admin_email: email } });
+      setCreatedOrg(data);
+      setNewOrgName('');
+      setNewOrgAdminEmail('');
+      await loadOrgs();
+    } catch (err) { setCreateOrgError(err.message || 'Create failed'); }
+    finally { setCreatingOrg(false); }
+  }
+  function resetCreateOrg() { setCreatedOrg(null); setCreateOrgError(''); }
+
   function signOut() {
     localStorage.removeItem(STORAGE_KEY);
     setSession(null);
@@ -1095,6 +1227,7 @@ export default function App() {
     if (activeNav === 'audit' && !audit) loadAudit('');
     if (activeNav === 'team' && !team) loadTeam();
     if (activeNav === 'apikey' && !apikey) loadApiKey();
+    if (activeNav === 'onboarding' && !orgs) loadOrgs();
     // eslint-disable-next-line
   }, [session?.token, activeNav]);
 
@@ -1120,6 +1253,7 @@ export default function App() {
   }
 
   const refreshedLabel = loading ? 'Refreshing…' : (lastLoaded ? `Refreshed ${timeAgo(new Date(lastLoaded).toISOString())}` : 'Connecting…');
+  const isSuperAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
   const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
 
   // chart inputs from the real daily series + summary
@@ -1140,7 +1274,7 @@ export default function App() {
   return (
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
-      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} />
+      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} isSuperAdmin={isSuperAdmin} />
 
       <main className="main">
         {activeNav === 'intake' ? (
@@ -1256,6 +1390,7 @@ export default function App() {
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
               : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} />
+              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} />
               : <StubView id={activeNav} session={session} />}
           </section>
         )}
