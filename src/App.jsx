@@ -1094,6 +1094,9 @@ export default function App() {
   const [viewOrgId, setViewOrgId] = useState(null); // { id, name } when a super-admin is drilled into another org
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 25;
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [planFilter, setPlanFilter] = useState('all');
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -1146,6 +1149,9 @@ export default function App() {
     try {
       const qs = new URLSearchParams();
       if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      if (dateFrom) qs.set('date_from', dateFrom);
+      if (dateTo) qs.set('date_to', dateTo);
+      if (planFilter && planFilter !== 'all') qs.set('plan', planFilter);
       qs.set('page', String(currentPage));
       qs.set('page_size', String(PAGE_SIZE));
       const data = await apiRequest('/auth/preauth-dashboard?' + qs.toString());
@@ -1311,13 +1317,13 @@ export default function App() {
     setDashboard(null);
   }
 
-  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage]);
+  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter]);
   useEffect(() => {
     if (!session?.token) return undefined;
     const t = setInterval(() => loadDashboard({ silent: true }), 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line
-  }, [session?.token, viewOrgId, currentPage]);
+  }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter]);
 
   useEffect(() => {
     if (!session?.token) return;
@@ -1333,6 +1339,7 @@ export default function App() {
   const summary = dashboard?.summary || {};
   const series = dashboard?.series || [];
   const requests = useMemo(() => rawRequests.map(mapRequest), [rawRequests]);
+  const planOptions = dashboard?.meta?.plans || [];
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return requests.filter((r) => {
@@ -1449,10 +1456,26 @@ export default function App() {
                     <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Request queue</h2>
                     <span className="muted mono" style={{ fontSize: 12 }}>{filtered.length} request{filtered.length === 1 ? '' : 's'}</span>
                   </div>
-                  <div className="toolbar" style={{ marginBottom: 14 }}>
-                    <div className="search">
+                  <div className="toolbar" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+                    <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }}>
                       <IconSearch />
                       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, patient, provider, plan, item, facility…" />
+                    </div>
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} title="From date">
+                      <span className="muted mono" style={{ fontSize: 11 }}>From</span>
+                      <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} style={{ width: 132, border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)' }} />
+                    </div>
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} title="To date">
+                      <span className="muted mono" style={{ fontSize: 11 }}>To</span>
+                      <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} style={{ width: 132, border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)' }} />
+                    </div>
+                    {(dateFrom || dateTo) ? <button className="btn sm" onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }}>Clear dates</button> : null}
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} title="Plan">
+                      <span className="muted mono" style={{ fontSize: 11 }}>Plan</span>
+                      <select value={planFilter} onChange={(e) => { setPlanFilter(e.target.value); setCurrentPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
+                        <option value="all">All plans</option>
+                        {planOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
                     </div>
                     {statusFilters.map((s) => (
                       <button key={s} className={`statbtn ${statusFilter === s ? 'on' : ''}`} onClick={() => setStatusFilter(s)}>{s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}</button>
