@@ -1401,7 +1401,28 @@ export default function App() {
                 <h1 className="page-title">Pre-Authorization</h1>
                 <p className="page-sub">
                   <span className="cal" aria-hidden="true"><IconCal /></span>
-                  Live · {summary.total ?? requests.length} requests this period
+                  {(() => {
+                    const fmt = (iso) => {
+                      if (!iso) return null;
+                      const d = new Date(iso);
+                      return isNaN(d) ? null : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    };
+                    const dw = dashboard?.meta?.data_window || {};
+                    const haveFilter = !!(dateFrom || dateTo);
+                    const fromStr = haveFilter ? (fmt(dateFrom) || 'start') : fmt(dw.earliest);
+                    const toStr = haveFilter ? (fmt(dateTo) || 'today') : fmt(dw.latest);
+                    const periodLabel = (fromStr && toStr)
+                      ? `${fromStr} → ${toStr}`
+                      : (fromStr || toStr || 'No data yet');
+                    return (
+                      <>
+                        {periodLabel}
+                        {haveFilter ? <span className="muted" style={{ marginLeft: 6 }}>(filtered)</span> : null}
+                        <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
+                        Live · {summary.total ?? requests.length} requests
+                      </>
+                    );
+                  })()}
                 </p>
               </div>
               <div className="page-actions">
