@@ -1097,6 +1097,8 @@ export default function App() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [planFilter, setPlanFilter] = useState('all');
+  // Debounced copy of the search box so we don't fire one fetch per keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   // Full patient history for the currently-open drawer. Fetched on demand so
   // siblings show across pages, not just within the visible 25.
   const [patientHistory, setPatientHistory] = useState({ patient_id: null, requests: [] });
@@ -1164,6 +1166,7 @@ export default function App() {
       if (dateFrom) qs.set('date_from', dateFrom);
       if (dateTo) qs.set('date_to', dateTo);
       if (planFilter && planFilter !== 'all') qs.set('plan', planFilter);
+      if (debouncedQuery && debouncedQuery.trim()) qs.set('q', debouncedQuery.trim());
       qs.set('page', String(currentPage));
       qs.set('page_size', String(PAGE_SIZE));
       const data = await apiRequest('/auth/preauth-dashboard?' + qs.toString());
@@ -1329,13 +1332,20 @@ export default function App() {
     setDashboard(null);
   }
 
-  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter]);
+  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter, debouncedQuery]);
+  // Debounce the search box: wait 300ms after last keystroke before fetching.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+  // When the effective search changes, jump back to page 1.
+  useEffect(() => { setCurrentPage(1); }, [debouncedQuery]);
   useEffect(() => {
     if (!session?.token) return undefined;
     const t = setInterval(() => loadDashboard({ silent: true }), 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line
-  }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter]);
+  }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter, debouncedQuery]);
 
   useEffect(() => {
     if (!session?.token) return;
