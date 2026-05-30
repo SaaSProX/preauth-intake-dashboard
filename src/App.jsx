@@ -1092,6 +1092,8 @@ export default function App() {
   const [createdOrg, setCreatedOrg] = useState(null);
   const [createOrgError, setCreateOrgError] = useState('');
   const [viewOrgId, setViewOrgId] = useState(null); // { id, name } when a super-admin is drilled into another org
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 25;
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -1142,8 +1144,11 @@ export default function App() {
     if (!silent) setLoading(true);
     setError('');
     try {
-      const path = '/auth/preauth-dashboard' + (viewOrgId ? `?org_id=${viewOrgId.id}` : '');
-      const data = await apiRequest(path);
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      qs.set('page', String(currentPage));
+      qs.set('page_size', String(PAGE_SIZE));
+      const data = await apiRequest('/auth/preauth-dashboard?' + qs.toString());
       setDashboard(data);
       setLastLoaded(Date.now());
     } catch (err) {
@@ -1306,13 +1311,13 @@ export default function App() {
     setDashboard(null);
   }
 
-  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId]);
+  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage]);
   useEffect(() => {
     if (!session?.token) return undefined;
     const t = setInterval(() => loadDashboard({ silent: true }), 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line
-  }, [session?.token, viewOrgId]);
+  }, [session?.token, viewOrgId, currentPage]);
 
   useEffect(() => {
     if (!session?.token) return;
@@ -1466,6 +1471,13 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                    {(dashboard?.pagination?.total_pages || 0) > 1 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, padding: '14px 16px', borderTop: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
+                        <span>Page {currentPage} of {dashboard.pagination.total_pages} · {dashboard.pagination.total.toLocaleString()} requests</span>
+                        <button className="btn sm" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
+                        <button className="btn sm" disabled={currentPage >= dashboard.pagination.total_pages} onClick={() => setCurrentPage((p) => p + 1)}>Next ›</button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
