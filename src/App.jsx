@@ -770,31 +770,60 @@ function TeamView({ data, loading, error, notice, isAdmin, org, inviteEmail, set
 /* ============================================================
    API Key (wired to /auth/api-key + generate/revoke)
    ============================================================ */
-function ApiKeyView({ data, loading, error, notice, isAdmin, org, revealed, busy, onGenerate, onRevoke }) {
-  const has = !!(data && data.has_api_key);
+function ApiKeyView({ data, error, notice, isAdmin, org, revealed, busy, onGenerate, onRevoke, keyName, setKeyName }) {
+  const keys = (data && data.keys) || [];
   return (
     <>
-      <div className="stub-head"><h1 className="page-title">API Key</h1></div>
-      <p className="page-sub">Credential the HMO uses to authenticate webhook deliveries · <b>{org}</b></p>
+      <div className="stub-head"><h1 className="page-title">API Keys</h1></div>
+      <p className="page-sub">Credentials used to authenticate webhook deliveries · <b>{org}</b></p>
       {!isAdmin ? <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — only admins can generate or revoke keys.</div> : null}
       {notice ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {notice}</div> : null}
       {error ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
-      <div className="metric section-gap" style={{ maxWidth: 620, marginTop: 20 }}>
-        <h3>{has || revealed ? 'Active key' : 'No active key'}</h3>
-        <p className="desc">{revealed ? 'Copy this now — the full key will not be shown again.' : has ? 'Shown masked. The full key is displayed once, on generation.' : 'Generate a key to authenticate this org’s webhook deliveries.'}</p>
-        {(revealed || has) ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, background: revealed ? 'var(--ok-bg)' : 'var(--bg-2)', border: `1px solid ${revealed ? 'var(--ok-line)' : 'var(--line)'}`, borderRadius: 9, padding: '13px 16px', fontFamily: 'var(--mono)', fontSize: 13 }}>
-            <span style={{ flex: 1, wordBreak: 'break-all' }}>{revealed || data.masked_api_key || '••••••••••••'}</span>
-            <span className={`pill ${revealed ? 'approve' : 'approve'}`}><span className="dot" />{revealed ? 'new' : 'active'}</span>
+
+      {isAdmin ? (
+        <div className="metric section-gap" style={{ maxWidth: 760, marginTop: 20 }}>
+          <h3>Generate a new key</h3>
+          <p className="desc">Name it so you can tell keys apart (e.g. "Aman prod webhook", "Staging test"). The full key is shown once, on generation.</p>
+          <form onSubmit={(e) => { e.preventDefault(); onGenerate(); }} style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <div className="search" style={{ flex: 1 }}>
+              <input value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="Key name (optional)" />
+            </div>
+            <button className="btn indigo" type="submit" disabled={busy}>{busy ? 'Generating…' : 'Generate key'}</button>
+          </form>
+          {revealed ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, background: 'var(--ok-bg)', border: '1px solid var(--ok-line)', borderRadius: 9, padding: '13px 16px', fontFamily: 'var(--mono)', fontSize: 13 }}>
+                <span style={{ flex: 1, wordBreak: 'break-all' }}>{revealed}</span>
+                <span className="pill approve"><span className="dot" />new</span>
+              </div>
+              <div className="muted mono" style={{ fontSize: 11.5, marginTop: 8 }}>Copy this now — the full key will not be shown again.</div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="section-gap" style={{ marginTop: 30 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Active keys</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>{keys.length} key{keys.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="queue">
+          <div className="qhead" style={{ gridTemplateColumns: '1.4fr 140px 130px 130px 100px' }}>
+            <span>Name</span><span>Key</span><span>Created</span><span>Last used</span><span style={{ textAlign: 'right' }}>Action</span>
           </div>
-        ) : null}
-        {has && data.created_at ? <div className="muted mono" style={{ fontSize: 11.5, marginTop: 10 }}>Created {timeAgo(data.created_at)}</div> : null}
-        {isAdmin ? (
-          <div style={{ display: 'flex', gap: 10, marginTop: 18 }} data-admin-only="">
-            <button className="btn" onClick={onGenerate} disabled={busy}>{busy ? 'Working…' : (has ? 'Regenerate (show once)' : 'Generate key')}</button>
-            {has ? <button className="btn" style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} onClick={onRevoke} disabled={busy}>Revoke</button> : null}
-          </div>
-        ) : null}
+          {keys.map((k) => (
+            <div className="qrow" key={k.id} style={{ gridTemplateColumns: '1.4fr 140px 130px 130px 100px', cursor: 'default' }}>
+              <div className="pt"><b>{k.name}</b></div>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>{k.masked_api_key}</div>
+              <div className="muted mono" style={{ fontSize: 12 }}>{k.created_at ? timeAgo(k.created_at) : '—'}</div>
+              <div className="muted mono" style={{ fontSize: 12 }}>{k.last_used_at ? timeAgo(k.last_used_at) : 'never'}</div>
+              <div style={{ textAlign: 'right' }}>
+                {isAdmin ? <button className="btn sm" onClick={() => onRevoke && onRevoke(k.id, k.name)} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} disabled={busy}>Revoke</button> : null}
+              </div>
+            </div>
+          ))}
+          {!keys.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">🔑</div><h4>No keys yet</h4><p>{isAdmin ? 'Generate one above to authenticate webhook deliveries from this org.' : 'An admin can generate API keys for this org.'}</p></div>}
+        </div>
       </div>
     </>
   );
@@ -1050,6 +1079,7 @@ export default function App() {
   const [apikeyNotice, setApikeyNotice] = useState('');
   const [apikeyBusy, setApikeyBusy] = useState(false);
   const [revealedKey, setRevealedKey] = useState('');
+  const [keyName, setKeyName] = useState('');
   const [orgs, setOrgs] = useState(null);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgsError, setOrgsError] = useState('');
@@ -1189,18 +1219,21 @@ export default function App() {
   async function generateKey() {
     setApikeyBusy(true); setApikeyError(''); setApikeyNotice('');
     try {
-      const res = await apiRequest('/auth/api-key/generate', { method: 'POST' });
+      const body = { name: (keyName || '').trim() || null };
+      const res = await apiRequest('/auth/api-key/generate', { method: 'POST', body });
       setRevealedKey(res.api_key || '');
-      setApikeyNotice(res.message || 'API key generated');
+      setApikeyNotice(`Key "${res.name || 'new'}" generated`);
+      setKeyName('');
       await loadApiKey();
     } catch (err) { setApikeyError(err.message || 'Generate failed'); }
     finally { setApikeyBusy(false); }
   }
-  async function revokeKey() {
-    setApikeyBusy(true); setApikeyError(''); setApikeyNotice(''); setRevealedKey('');
+  async function revokeKey(keyId, keyDisplayName) {
+    if (!window.confirm(`Revoke key "${keyDisplayName || 'this key'}"? This cannot be undone.`)) return;
+    setApikeyBusy(true); setApikeyError(''); setApikeyNotice('');
     try {
-      const res = await apiRequest('/auth/api-key', { method: 'DELETE' });
-      setApikeyNotice(res.message || 'API key revoked');
+      await apiRequest(`/auth/api-key/${keyId}`, { method: 'DELETE' });
+      setApikeyNotice(`Key "${keyDisplayName || 'key'}" revoked`);
       await loadApiKey();
     } catch (err) { setApikeyError(err.message || 'Revoke failed'); }
     finally { setApikeyBusy(false); }
@@ -1456,7 +1489,7 @@ export default function App() {
             {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
-              : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} />
+              : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
               : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={(o) => { setViewOrgId({ id: o.id, name: o.name }); setActiveNav('intake'); setSelectedId(''); setDrawerOpen(false); setDashboard(null); }} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
               : <StubView id={activeNav} session={session} />}
           </section>
