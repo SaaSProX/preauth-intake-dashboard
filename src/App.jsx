@@ -1005,6 +1005,9 @@ const IconCopy = () => (
 const IconExport = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>
 );
+const IconRefresh = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+);
 
 /* ============================================================
    Login
@@ -1390,7 +1393,7 @@ export default function App() {
                 </p>
               </div>
               <div className="page-actions">
-                <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconCopy /></button>
+                <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconRefresh /></button>
                 <button className="btn primary" data-admin-only="">Export report <IconExport /></button>
               </div>
             </div>
