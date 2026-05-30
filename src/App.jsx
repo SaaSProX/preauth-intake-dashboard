@@ -781,7 +781,7 @@ function ApiKeyView({ data, error, notice, isAdmin, org, revealed, busy, onGener
       {error ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
 
       {isAdmin ? (
-        <div className="metric section-gap" style={{ maxWidth: 760, marginTop: 20 }}>
+        <div className="metric section-gap" data-admin-only="" style={{ maxWidth: 760, marginTop: 20 }}>
           <h3>Generate a new key</h3>
           <p className="desc">Name it so you can tell keys apart (e.g. "Aman prod webhook", "Staging test"). The full key is shown once, on generation.</p>
           <form onSubmit={(e) => { e.preventDefault(); onGenerate(); }} style={{ display: 'flex', gap: 10, marginTop: 14 }}>
@@ -817,7 +817,7 @@ function ApiKeyView({ data, error, notice, isAdmin, org, revealed, busy, onGener
               <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>{k.masked_api_key}</div>
               <div className="muted mono" style={{ fontSize: 12 }}>{k.created_at ? timeAgo(k.created_at) : '—'}</div>
               <div className="muted mono" style={{ fontSize: 12 }}>{k.last_used_at ? timeAgo(k.last_used_at) : 'never'}</div>
-              <div style={{ textAlign: 'right' }}>
+              <div style={{ textAlign: 'right' }} data-admin-only="">
                 {isAdmin ? <button className="btn sm" onClick={() => onRevoke && onRevoke(k.id, k.name)} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} disabled={busy}>Revoke</button> : null}
               </div>
             </div>
@@ -1100,6 +1100,14 @@ export default function App() {
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
+  // Super-admin drill-in is view-only. When the active org context differs from
+  // the user's own org, hide write actions and surface a banner so they can't
+  // accidentally mutate the client's data through their own-org write endpoints.
+  useEffect(() => {
+    const drilled = !!(viewOrgId && session && viewOrgId.name !== session.org_name);
+    document.body.classList.toggle('drill-in-view', drilled);
+    return () => document.body.classList.remove('drill-in-view');
+  }, [viewOrgId, session]);
   useEffect(() => { if (session) setRole(session.role || 'admin'); }, [session]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
@@ -1385,15 +1393,20 @@ export default function App() {
       <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} isSuperAdmin={isSuperAdmin} onSignOut={signOut} />
 
       <main className="main">
+        {viewOrgId && viewOrgId.name !== session.org_name ? (
+          <div className="ro-banner" style={{ display: 'flex', alignItems: 'center', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
+            <span className="led" style={{ background: 'var(--indigo)' }} />
+            <span>
+              Viewing as super-admin · scoped to <b>{viewOrgId.name}</b>
+              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                Read-only drill-in — changes you make would land in <b>{session.org_name}</b>, so write actions are hidden. Switch back to manage <b>{viewOrgId.name}</b>'s team, keys or org settings via their own admin.
+              </span>
+            </span>
+            <button className="btn sm" onClick={exitViewAs} style={{ marginLeft: 'auto' }}>← Back to platform view</button>
+          </div>
+        ) : null}
         {activeNav === 'intake' ? (
           <section id="view-intake">
-            {viewOrgId ? (
-              <div className="ro-banner" style={{ display: 'flex', alignItems: 'center', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
-                <span className="led" style={{ background: 'var(--indigo)' }} />
-                Viewing as super-admin · Pre-Auth Intake scoped to <b style={{ marginLeft: 4 }}>{viewOrgId.name}</b>
-                <button className="btn sm" onClick={exitViewAs} style={{ marginLeft: 'auto' }}>← Back to platform view</button>
-              </div>
-            ) : null}
             <div className="ro-banner"><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — you're signed in as a member. Operational data is visible; actions are disabled.</div>
 
             <div className="page-head">
