@@ -447,7 +447,7 @@ function AgentTimeline({ r }) {
     </div>
   );
 }
-function DetailView({ r }) {
+function DetailView({ r, siblings, onSelectSibling }) {
   if (!r) return null;
   return (
     <div className="detail">
@@ -464,6 +464,24 @@ function DetailView({ r }) {
       <DecisionBlock r={r} />
       <div><div className="sec-h">Request details</div><DetailsGrid r={r} /></div>
       <LineItems r={r} />
+      {siblings && siblings.length > 0 ? (
+        <div>
+          <div className="sec-h">Other requests from this patient <span className="n">{siblings.length}</span></div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+            {siblings.slice(0, 8).map((s) => (
+              <button key={s.request_id} onClick={() => onSelectSibling && onSelectSibling(s.request_id)} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px', cursor: 'pointer', textAlign: 'left' }} title="Switch to this request">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>{s.display_request_id}</span>
+                  <Pill status={s.status} />
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--ink)', marginTop: 4 }}>{s.item_description}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{s.received_label} · {fmtNGN(s.requested_amount)}</div>
+              </button>
+            ))}
+            {siblings.length > 8 ? <div className="muted mono" style={{ fontSize: 11.5, padding: '4px 2px' }}>+{siblings.length - 8} more</div> : null}
+          </div>
+        </div>
+      ) : null}
       <div>
         <div className="sec-h">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
         <AgentTimeline r={r} />
@@ -478,7 +496,7 @@ function DetailView({ r }) {
     </div>
   );
 }
-function Drawer({ request, open, onClose }) {
+function Drawer({ request, open, onClose, siblings, onSelectSibling }) {
   return (
     <>
       <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} />
@@ -486,7 +504,7 @@ function Drawer({ request, open, onClose }) {
         <button className="icon-btn dclose" onClick={onClose} aria-label="Close">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
-        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} /> : null}</div></div>
+        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} /> : null}</div></div>
       </aside>
     </>
   );
@@ -1284,6 +1302,9 @@ export default function App() {
   }, [requests, query, statusFilter]);
 
   const selected = requests.find((r) => r.request_id === selectedId) || null;
+  const siblings = (selected && selected.patient_id && selected.patient_id !== '—')
+    ? requests.filter((r) => r.patient_id === selected.patient_id && r.request_id !== selected.request_id)
+    : [];
 
   function openRequest(id) { setSelectedId(id); setDrawerOpen(true); }
 
@@ -1443,7 +1464,7 @@ export default function App() {
       </main>
 
       <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
-      <Drawer request={selected} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Drawer request={selected} siblings={siblings} onSelectSibling={openRequest} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </div>
   );
 }
