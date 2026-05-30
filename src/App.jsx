@@ -1097,6 +1097,10 @@ export default function App() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [planFilter, setPlanFilter] = useState('all');
+  // Full patient history for the currently-open drawer. Fetched on demand so
+  // siblings show across pages, not just within the visible 25.
+  const [patientHistory, setPatientHistory] = useState({ patient_id: null, requests: [] });
+  const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -1357,10 +1361,43 @@ export default function App() {
     });
   }, [requests, query, statusFilter]);
 
-  const selected = requests.find((r) => r.request_id === selectedId) || null;
-  const siblings = (selected && selected.patient_id && selected.patient_id !== '—')
-    ? requests.filter((r) => r.patient_id === selected.patient_id && r.request_id !== selected.request_id)
+  // Resolve `selected` from the current page first; fall back to the loaded
+  // patient history so clicking a sibling whose row sits on another page still
+  // opens the right record without forcing a queue refetch.
+  const selected = requests.find((r) => r.request_id === selectedId)
+    || (patientHistory.requests || []).find((r) => r.request_id === selectedId)
+    || null;
+  const siblings = (selected && patientHistory.patient_id === selected.patient_id)
+    ? patientHistory.requests.filter((r) => r.request_id !== selected.request_id)
     : [];
+
+  // Fetch the full PA history for the patient whose drawer is open. Skips bare
+  // 'unknown' / '—' so we don't try to lump unrelated parse-failure rows.
+  useEffect(() => {
+    const pid = selected?.patient_id || '';
+    if (!selected || !pid || pid === '—' || pid.toLowerCase() === 'unknown') {
+      setPatientHistory({ patient_id: null, requests: [] });
+      return undefined;
+    }
+    if (patientHistory.patient_id === pid) return undefined; // already loaded
+    let cancelled = false;
+    setPatientHistoryLoading(true);
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        qs.set('patient_id', pid);
+        if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+        const data = await apiRequest('/auth/patient-history?' + qs.toString());
+        if (!cancelled) setPatientHistory({ patient_id: data.patient_id || pid, requests: data.requests || [] });
+      } catch (_e) {
+        if (!cancelled) setPatientHistory({ patient_id: pid, requests: [] });
+      } finally {
+        if (!cancelled) setPatientHistoryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [selected?.patient_id, viewOrgId]);
 
   function openRequest(id) { setSelectedId(id); setDrawerOpen(true); }
 
