@@ -785,7 +785,7 @@ function ApiKeyView({ data, loading, error, notice, isAdmin, org, revealed, busy
 /* ============================================================
    Onboarding (SaaSPro super-admin: cross-org platform view)
    ============================================================ */
-function OnboardingView({ data, loading, error, isSuperAdmin, orgName, setOrgName, adminEmail, setAdminEmail, onCreate, creating, created, createError, onResetCreate, onSelectOrg }) {
+function OnboardingView({ data, loading, error, isSuperAdmin, orgName, setOrgName, adminEmail, setAdminEmail, onCreate, creating, created, createError, onResetCreate, onSelectOrg, onRenameOrg, onToggleActive }) {
   if (!isSuperAdmin) {
     return (
       <>
@@ -851,17 +851,25 @@ function OnboardingView({ data, loading, error, isSuperAdmin, orgName, setOrgNam
         </div>
         {error ? <div className="ro-banner" style={{ display: 'flex', background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)', marginBottom: 14 }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
         <div className="queue">
-          <div className="qhead" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px' }}>
-            <span>Organization</span><span>Members</span><span>Pending</span><span>API keys</span><span>Requests</span><span>Last activity</span>
+          <div className="qhead" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px 200px' }}>
+            <span>Organization</span><span>Members</span><span>Pending</span><span>API keys</span><span>Requests</span><span>Last activity</span><span style={{ textAlign: 'right' }}>Actions</span>
           </div>
           {orgs.map((o) => (
-            <div className="qrow" key={o.id} onClick={() => onSelectOrg && onSelectOrg(o)} title="View this org's intake" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px', cursor: onSelectOrg ? 'pointer' : 'default' }}>
+            <div className="qrow" key={o.id} onClick={() => onSelectOrg && onSelectOrg(o)} title="View this org's intake" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px 200px', cursor: onSelectOrg ? 'pointer' : 'default', opacity: o.is_active ? 1 : 0.55 }}>
               <div className="pt"><b>{o.name}</b><small>{o.is_active ? 'active' : 'disabled'}</small></div>
               <div className="mono" style={{ fontSize: 12 }}>{(o.members || 0).toLocaleString()}</div>
               <div>{o.pending_invites > 0 ? <span className="pill escalate"><span className="dot" />{o.pending_invites}</span> : <span className="muted mono" style={{ fontSize: 12 }}>—</span>}</div>
               <div className="mono" style={{ fontSize: 12 }}>{(o.api_keys || 0).toLocaleString()}</div>
               <div className="mono" style={{ fontSize: 12 }}>{(o.requests || 0).toLocaleString()}</div>
               <div className="muted mono" style={{ fontSize: 12 }}>{o.last_activity ? timeAgo(o.last_activity) : 'never'}</div>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button className="btn sm" onClick={(e) => { e.stopPropagation(); onRenameOrg && onRenameOrg(o); }} title="Rename">Rename</button>
+                {o.name.toUpperCase() !== 'SAASPRO' ? (
+                  o.is_active
+                    ? <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, false); }} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} title="Deactivate">Deactivate</button>
+                    : <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, true); }} title="Reactivate">Reactivate</button>
+                ) : null}
+              </div>
             </div>
           ))}
           {!orgs.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">⊞</div><h4>{loading ? 'Loading…' : 'No organizations yet'}</h4></div>}
@@ -1205,6 +1213,28 @@ export default function App() {
     finally { setCreatingOrg(false); }
   }
   function resetCreateOrg() { setCreatedOrg(null); setCreateOrgError(''); }
+  async function renameOrg(o) {
+    const next = window.prompt(`Rename "${o.name}" to:`, o.name);
+    if (next === null) return;
+    const name = next.trim();
+    if (!name || name === o.name) return;
+    try {
+      await apiRequest(`/auth/onboarding/orgs/${o.id}`, { method: 'PATCH', body: { name } });
+      await loadOrgs();
+    } catch (err) {
+      window.alert('Rename failed: ' + (err.message || 'unknown error'));
+    }
+  }
+  async function setOrgActive(o, active) {
+    const verb = active ? 'Reactivate' : 'Deactivate';
+    if (!window.confirm(`${verb} "${o.name}"?`)) return;
+    try {
+      await apiRequest(`/auth/onboarding/orgs/${o.id}`, { method: 'PATCH', body: { is_active: active } });
+      await loadOrgs();
+    } catch (err) {
+      window.alert(`${verb} failed: ` + (err.message || 'unknown error'));
+    }
+  }
 
   function signOut() {
     localStorage.removeItem(STORAGE_KEY);
@@ -1406,7 +1436,7 @@ export default function App() {
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
               : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} />
-              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={(o) => { setViewOrgId({ id: o.id, name: o.name }); setActiveNav('intake'); setSelectedId(''); setDrawerOpen(false); setDashboard(null); }} />
+              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={(o) => { setViewOrgId({ id: o.id, name: o.name }); setActiveNav('intake'); setSelectedId(''); setDrawerOpen(false); setDashboard(null); }} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
               : <StubView id={activeNav} session={session} />}
           </section>
         )}
