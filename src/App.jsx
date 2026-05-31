@@ -1082,7 +1082,7 @@ function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleColla
       href="#"
       title={collapsed ? n.label : undefined}
       data-tip={!n.live ? 'Coming soon — this page exists in the design but isn’t wired to a backend endpoint yet.' : (n.lock ? 'Admin-only feature. Hidden for members.' : undefined)}
-      data-tip-align="left"
+      data-tip-pos="right"
       onClick={(e) => { e.preventDefault(); onNav(n.id); }}
     >
       <span className="gl" /><span className="nav-label">{n.label}</span>

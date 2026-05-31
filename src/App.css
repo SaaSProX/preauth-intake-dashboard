@@ -498,6 +498,21 @@ img, svg { display: block; }
 }
 [data-tip][data-tip-align="left"]:hover::after { left: 0; transform: none; }
 [data-tip][data-tip-align="right"]:hover::after { left: auto; right: 0; transform: none; }
+
+/* Position tooltip to the right of the host element — for left-edge items
+   (sidebar nav) where above/below would clip the viewport. */
+[data-tip][data-tip-pos="right"]:hover::after {
+  bottom: auto;
+  top: 50%;
+  left: calc(100% + 8px);
+  right: auto;
+  transform: translateY(-50%);
+  animation-name: tip-fade-in-right;
+}
+@keyframes tip-fade-in-right {
+  from { opacity: 0; transform: translateY(-50%) translateX(-2px); }
+  to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
 /* Platform-admin drill-in is view-only: writes would land in the platform
    admin's own (SaaSPro) org, not the org being viewed. Hide write actions
    across all views. */
