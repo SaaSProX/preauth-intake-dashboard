@@ -449,6 +449,55 @@ img, svg { display: block; }
 .ro-banner { display: none; align-items: center; gap: 10px; background: var(--recv-bg); border: 1px solid var(--recv-line); color: var(--recv-ink); font-family: var(--mono); font-size: 12px; border-radius: 9px; padding: 9px 14px; margin-bottom: 20px; }
 .role-member .ro-banner { display: flex; }
 .role-member [data-admin-only] { display: none !important; }
+
+/* ============================================================
+   Tooltips — CSS-only, attribute-driven. Add data-tip="text"
+   to any element. 300ms delay so they don't pop while brushing
+   past; 11px mono to stay subtle.
+   ============================================================ */
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  border: 1px solid var(--indigo-soft);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  font-weight: 500;
+  text-transform: none;
+  white-space: pre-wrap;
+  width: max-content;
+  max-width: 280px;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(11, 15, 28, 0.08);
+  animation: tip-fade-in 0.15s ease-out 0.3s both;
+}
+@keyframes tip-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(2px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+/* Variants: position below if data-tip-pos="below"; align-left for tight rails */
+[data-tip][data-tip-pos="below"]:hover::after {
+  bottom: auto; top: calc(100% + 6px);
+}
+[data-tip][data-tip-pos="below"]:hover::after {
+  animation-name: tip-fade-in-below;
+}
+@keyframes tip-fade-in-below {
+  from { opacity: 0; transform: translateX(-50%) translateY(-2px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+[data-tip][data-tip-align="left"]:hover::after { left: 0; transform: none; }
+[data-tip][data-tip-align="right"]:hover::after { left: auto; right: 0; transform: none; }
 /* Platform-admin drill-in is view-only: writes would land in the platform
    admin's own (SaaSPro) org, not the org being viewed. Hide write actions
    across all views. */

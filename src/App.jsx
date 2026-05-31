@@ -53,13 +53,13 @@ function fmtClock(value) {
 }
 
 const STATUS_META = {
-  approve: { label: 'Approve', cls: 'approve' },
-  deny: { label: 'Deny', cls: 'deny' },
-  escalate: { label: 'Escalate', cls: 'escalate' },
-  pending: { label: 'Pending', cls: 'pending' },
-  processing: { label: 'Processing', cls: 'processing' },
-  received: { label: 'Received', cls: 'received' },
-  error: { label: 'Error', cls: 'error' },
+  approve:    { label: 'Approve',    cls: 'approve',    help: 'Agent decided to authorize the request.' },
+  deny:       { label: 'Deny',       cls: 'deny',       help: 'Agent refused the request — usually exclusion, limit exceeded, or eligibility issue.' },
+  escalate:   { label: 'Escalate',   cls: 'escalate',   help: 'Agent flagged for human review — high cost, ambiguous, or missing data.' },
+  pending:    { label: 'Pending',    cls: 'pending',    help: 'Received but not yet picked up. Awaiting an agent run.' },
+  processing: { label: 'Processing', cls: 'processing', help: 'Pipeline is mid-run. Should resolve within seconds.' },
+  received:   { label: 'Received',   cls: 'received',   help: 'Live HMO payload captured. Decisioning paused pending mapping validation.' },
+  error:      { label: 'Error',      cls: 'error',      help: 'Pipeline crashed before deciding. See the request drawer for the error message.' },
 };
 function normalizeStatus(v) {
   const s = String(v || 'pending').toLowerCase();
@@ -297,6 +297,12 @@ function requestedAmount(r, raw) {
   return total || Number(p.total_requested_cost) || Number(r.estimated_cost) || 0;
 }
 const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
+const STAGE_TIPS = {
+  Eligibility: 'Is the member valid — active, not expired, within age limit, enrollment valid?',
+  'Plan & Coverage': 'Is each requested item covered, excluded, or in a waiting period?',
+  'Utilization & Limits': 'Does this PA fit under the patient’s bucket limit and annual cap?',
+  'Final Decision': 'Aggregates stages 1–3 into APPROVE / DENY / ESCALATE plus an approved amount.',
+};
 const STAGE_Q = {
   Eligibility: 'Is the member valid — active, not expired, within age limit?',
   'Plan & Coverage': 'Is the item covered, excluded, or in a waiting period?',
@@ -426,11 +432,18 @@ function jsonPretty(obj) {
    ============================================================ */
 function Pill({ status }) {
   const m = STATUS_META[status] || STATUS_META.pending;
-  return <span className={`pill ${m.cls}`}><span className="dot" />{m.label}</span>;
+  return <span className={`pill ${m.cls}`} data-tip={m.help}><span className="dot" />{m.label}</span>;
 }
 function Conf({ level }) {
   if (!level) return null;
-  return <span className={`conf ${String(level).toLowerCase()}`}><span className="bars"><i /><i /><i /></span><b>{level}</b> confidence</span>;
+  return (
+    <span
+      className={`conf ${String(level).toLowerCase()}`}
+      data-tip="The agent’s self-assessment of how confident it is in this decision. Not a probability — a coarse signal."
+    >
+      <span className="bars"><i /><i /><i /></span><b>{level}</b> confidence
+    </span>
+  );
 }
 function PlanTag({ plan }) {
   return <span className={`plan-tag ${planClass(plan)}`}>{plan}</span>;
@@ -526,10 +539,10 @@ function Html({ html, className, style }) {
 /* ============================================================
    Report: metric card + queue table
    ============================================================ */
-function MetricCard({ title, desc, big, chartHtml, moveH, moveP }) {
+function MetricCard({ title, desc, big, chartHtml, moveH, moveP, tip }) {
   return (
     <div className="metric">
-      <h3>{title}</h3>
+      <h3 data-tip={tip} data-tip-align="left">{title}</h3>
       <p className="desc">{desc}</p>
       {big ? <div className="big" dangerouslySetInnerHTML={{ __html: big }} /> : null}
       <div className="chart-wrap">
@@ -559,7 +572,7 @@ function QueueRow({ r, selected, onSelect }) {
         {r.patient_pa_count > 1 ? (
           <span
             className="mono"
-            title={`${r.patient_pa_count} PAs from this patient`}
+            data-tip={`This patient has ${r.patient_pa_count} pre-auth requests in this org. Open the drawer to see the full list under "Other requests from this patient".`}
             style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)', fontSize: 10.5, fontWeight: 600, verticalAlign: 'middle' }}
           >
             {r.patient_pa_count}× PAs
@@ -676,7 +689,12 @@ function LineItems({ r }) {
                 <div style={{ fontSize: 13 }}>{it.name}</div>
                 <div>
                   {verdict ? (
-                    <span title={verdict.reason || ''} style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'var(--mono)' }}>
+                    <span
+                      data-tip={verdict.verdict === 'denied'
+                        ? (verdict.reason ? `Agent 2 (Plan & Coverage) flagged this item: ${verdict.reason}` : 'Agent 2 (Plan & Coverage) found this item is excluded or hits a coverage rule.')
+                        : 'Agent 2 (Plan & Coverage) confirmed this item is covered by the patient’s plan.'}
+                      style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'var(--mono)' }}
+                    >
                       {verdict.verdict}
                     </span>
                   ) : null}
@@ -846,7 +864,7 @@ function AgentTimeline({ r }) {
           <div className={`stage ${cls}`} key={i}>
             <div className="node">{node}</div>
             <div className="s-top">
-              <span className="s-name">{s.n}. {s.name}</span>
+              <span className="s-name" data-tip={STAGE_TIPS[s.name]} data-tip-align="left">{s.n}. {s.name}</span>
               <span className="s-stat">{statTxt}</span>
               {s.time ? <span className="s-time">{s.time}</span> : null}
             </div>
@@ -879,7 +897,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
       <LineItems r={r} />
       {siblings && siblings.length > 0 ? (
         <div>
-          <div className="sec-h">Other requests from this patient <span className="n">{siblings.length}</span></div>
+          <div className="sec-h" data-tip="Every other PA from the same patient_id (or insurance_no fallback when patient_id is unknown), across all queue pages." data-tip-align="left">Other requests from this patient <span className="n">{siblings.length}</span></div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
             {siblings.slice(0, 8).map((s) => (
               <button key={s.request_id} onClick={() => onSelectSibling && onSelectSibling(s.request_id)} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px', cursor: 'pointer', textAlign: 'left' }} title="Switch to this request">
@@ -897,7 +915,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
       ) : null}
       {(paEvents && paEvents.length) || paEventsLoading || paEventsError || (r.event_count && r.event_count > 0) ? (
         <div>
-          <div className="sec-h">PA event timeline <span className="n">{(paEvents || []).length || r.event_count || 0}</span></div>
+          <div className="sec-h" data-tip="Each row is one webhook delivery from the HMO for this check-in. First event = initial capture; later events = additional items added by the doctor." data-tip-align="left">PA event timeline <span className="n">{(paEvents || []).length || r.event_count || 0}</span></div>
           {paEventsError ? (
             <div style={{ padding: '10px 12px', background: 'var(--bad-bg)', color: 'var(--bad-ink)', border: '1px solid var(--bad-line)', borderRadius: 9, fontSize: 12, fontFamily: 'var(--mono)' }}>
               Couldn't load events: {paEventsError}
@@ -955,7 +973,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
         </div>
       ) : null}
       <div>
-        <div className="sec-h">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
+        <div className="sec-h" data-tip="All 4 agents that ran for this PA: Eligibility → Coverage → Limits → Final Decision. Each stage shows its reason and structured result." data-tip-align="left">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
         <AgentTimeline r={r} />
       </div>
       <div>
@@ -992,10 +1010,10 @@ function StatusBar({ session, role, onRole, refreshedLabel }) {
   return (
     <div className="statusbar">
       <div className="sb-org"><span className="org-dot">{short}</span><b>{org}</b><span className="scope">org-scoped</span></div>
-      <div className="sb-refresh"><span className="spin" /> {refreshedLabel}</div>
+      <div className="sb-refresh" data-tip="Last successful fetch. Auto-refreshes every 15s. Click the refresh icon on the page header to force a refetch." data-tip-pos="below"><span className="spin" /> {refreshedLabel}</div>
       <div className="sb-right">
         {isAdmin ? (
-          <span className="roleswitch" title="Preview the member experience">
+          <span className="roleswitch" data-tip="Preview what each role sees. Doesn't change your actual role — just toggles the UI for testing." data-tip-pos="below" data-tip-align="right">
             <button className={role === 'admin' ? 'on' : ''} onClick={() => onRole('admin')}>Admin</button>
             <button className={role === 'member' ? 'on' : ''} onClick={() => onRole('member')}>Member</button>
           </span>
@@ -1024,7 +1042,15 @@ const NAV_PLATFORM = [
 function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse, isPlatformAdmin, onSignOut }) {
   const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
   const item = (n) => (
-    <a key={n.id} className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`} href="#" title={collapsed ? n.label : undefined} onClick={(e) => { e.preventDefault(); onNav(n.id); }}>
+    <a
+      key={n.id}
+      className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`}
+      href="#"
+      title={collapsed ? n.label : undefined}
+      data-tip={!n.live ? 'Coming soon — this page exists in the design but isn’t wired to a backend endpoint yet.' : (n.lock ? 'Admin-only feature. Hidden for members.' : undefined)}
+      data-tip-align="left"
+      onClick={(e) => { e.preventDefault(); onNav(n.id); }}
+    >
       <span className="gl" /><span className="nav-label">{n.label}</span>
       {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)}
     </a>
@@ -1281,7 +1307,7 @@ function ApiKeyView({ data, error, notice, isAdmin, org, revealed, busy, onGener
         </div>
         <div className="queue">
           <div className="qhead" style={{ gridTemplateColumns: '1.4fr 140px 130px 130px 100px' }}>
-            <span>Name</span><span>Key</span><span>Created</span><span>Last used</span><span style={{ textAlign: 'right' }}>Action</span>
+            <span>Name</span><span data-tip="Only the first 4 and last 4 characters are stored as a display hint. The full key is shown once at generation — copy it then." data-tip-align="left">Key</span><span>Created</span><span data-tip="Most recent successful webhook authentication with this key. ‘never’ means the HMO hasn’t sent a webhook with it yet." data-tip-align="left">Last used</span><span style={{ textAlign: 'right' }}>Action</span>
           </div>
           {keys.map((k) => (
             <div className="qrow" key={k.id} style={{ gridTemplateColumns: '1.4fr 140px 130px 130px 100px', cursor: 'default' }}>
@@ -1385,7 +1411,7 @@ function OnboardingView({ data, loading, error, isPlatformAdmin, orgName, setOrg
                 <button className="btn sm" onClick={(e) => { e.stopPropagation(); onRenameOrg && onRenameOrg(o); }} title="Rename">Rename</button>
                 {o.name.toUpperCase() !== 'SAASPRO' ? (
                   o.is_active
-                    ? <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, false); }} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} title="Deactivate">Deactivate</button>
+                    ? <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, false); }} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} data-tip="Inactive orgs can’t accept webhooks or have their members log in. History is preserved." data-tip-pos="below" data-tip-align="right">Deactivate</button>
                     : <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, true); }} title="Reactivate">Reactivate</button>
                 ) : null}
               </div>
@@ -2033,7 +2059,7 @@ function AppInner() {
                 Read-only drill-in — changes you make would land in <b>{session.org_name}</b>, so write actions are hidden. Switch back to manage <b>{viewOrgId.name}</b>'s team, keys or org settings via their own admin.
               </span>
             </span>
-            <button className="btn sm" onClick={exitViewAs} style={{ marginLeft: 'auto' }}>← Back to platform view</button>
+            <button className="btn sm" onClick={exitViewAs} style={{ marginLeft: 'auto' }} data-tip="Returns to your own org (SaaSPro). Drops the ?org= param from the URL." data-tip-pos="below" data-tip-align="right">← Back to platform view</button>
           </div>
         ) : null}
         {activeNav === 'intake' ? (
@@ -2060,10 +2086,10 @@ function AppInner() {
                       : (fromStr || toStr || 'No data yet');
                     return (
                       <>
-                        {periodLabel}
-                        {haveFilter ? <span className="muted" style={{ marginLeft: 6 }}>(filtered)</span> : null}
+                        <span data-tip="Earliest and latest received_at of PAs in this org. Active filters override this window.">{periodLabel}</span>
+                        {haveFilter ? <span className="muted" style={{ marginLeft: 6 }} data-tip="A toolbar date filter is active. Clear it to see the full data window.">(filtered)</span> : null}
                         <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
-                        Live · {summary.total ?? requests.length} requests
+                        <span data-tip="Auto-refreshes every 15s.">Live</span> · {summary.total ?? requests.length} requests
                       </>
                     );
                   })()}
@@ -2085,6 +2111,7 @@ function AppInner() {
                 <div className="grid-2 section-gap" style={{ marginTop: 24 }}>
                   <MetricCard
                     title="Requests received"
+                    tip="Inbound webhook count over the period. Includes parse-failed deliveries that never made it to a PA."
                     desc="Inbound pre-auth volume across the period"
                     big={`${summary.received_24h ?? 0} <small>last 24h</small>`}
                     chartHtml={chartBars(recvSeries, { accent: 'var(--ink-3)', labels: dayLabels })}
@@ -2093,6 +2120,7 @@ function AppInner() {
                   />
                   <MetricCard
                     title="Decision outcomes"
+                    tip="Distribution of final decisions for this period: Approve, Deny, Escalate."
                     desc="How the AI pipeline resolved this period's requests"
                     chartHtml={chartDonut(outcomeSplit)}
                     moveH={`${approvalRate}% approval rate`}
@@ -2100,6 +2128,7 @@ function AppInner() {
                   />
                   <MetricCard
                     title="Decision latency"
+                    tip="Average seconds from when a PA was received to when the agent finished deciding. Excludes still-processing PAs."
                     desc="Time from received → decided"
                     big={`${avgLatTxt}<small>s avg</small>`}
                     chartHtml={chartLine(latSeries, { accent: 'var(--indigo)', suffix: 's' })}
@@ -2108,6 +2137,7 @@ function AppInner() {
                   />
                   <MetricCard
                     title="PA value approved"
+                    tip="Sum of agent_result.amount_approved for APPROVE decisions in this period. Excludes denied, escalated, and pending PAs."
                     desc="Total authorized value (NGN)"
                     big={fmtNGN(summary.total_amount_approved ?? 0)}
                     chartHtml={chartLine(valSeries, { accent: 'var(--ok)', prefix: '₦' })}
@@ -2124,18 +2154,25 @@ function AppInner() {
                   <div className="toolbar" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
                     <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }}>
                       <IconSearch />
-                      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, patient, provider, plan, item, facility…" />
+                      <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search reference, patient, provider, plan, item, facility…"
+                    data-tip="Searches patient ID, request ID, decision, and the full webhook payload (names, facilities, plans, item descriptions). Server-side, across all pages."
+                    data-tip-pos="below"
+                    data-tip-align="left"
+                  />
                     </div>
-                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} title="From date">
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Filters by webhook received_at (UTC). Leave blank to include everything." data-tip-pos="below">
                       <span className="muted mono" style={{ fontSize: 11 }}>From</span>
                       <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} style={{ width: 132, border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)' }} />
                     </div>
-                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} title="To date">
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Filters by webhook received_at (UTC). Leave blank to include everything." data-tip-pos="below">
                       <span className="muted mono" style={{ fontSize: 11 }}>To</span>
                       <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} style={{ width: 132, border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)' }} />
                     </div>
                     {(dateFrom || dateTo) ? <button className="btn sm" onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }}>Clear dates</button> : null}
-                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} title="Plan">
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Filters by the patient’s plan tier on the PA. Case-insensitive — Gold and GOLD group as one." data-tip-pos="below">
                       <span className="muted mono" style={{ fontSize: 11 }}>Plan</span>
                       <select value={planFilter} onChange={(e) => { setPlanFilter(e.target.value); setCurrentPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
                         <option value="all">All plans</option>
@@ -2143,7 +2180,13 @@ function AppInner() {
                       </select>
                     </div>
                     {statusFilters.map((s) => (
-                      <button key={s} className={`statbtn ${statusFilter === s ? 'on' : ''}`} onClick={() => setStatusFilter(s)}>{s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}</button>
+                      <button
+                        key={s}
+                        className={`statbtn ${statusFilter === s ? 'on' : ''}`}
+                        onClick={() => setStatusFilter(s)}
+                        data-tip={s === 'all' ? 'Show requests of every status.' : (STATUS_META[s]?.help || undefined)}
+                        data-tip-pos="below"
+                      >{s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}</button>
                     ))}
                   </div>
                   <div className="queue">
