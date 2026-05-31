@@ -10,6 +10,27 @@ function normalizeApiBaseUrl(value) {
   const w = /^https?:\/\//i.test(t) ? t : `http://${t}`;
   return w.replace(/\/+$/, '');
 }
+function isInviteRegistrationRoute() {
+  const params = new URLSearchParams(window.location.search);
+  return window.location.pathname === '/register' || params.has('token');
+}
+function replaceBrowserPath(path) {
+  window.history.replaceState({}, '', path);
+}
+async function publicApiRequest(path, options = {}) {
+  const headers = {
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers || {}),
+  };
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, body: options.body ? JSON.stringify(options.body) : undefined });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    const detail = data?.detail || data?.message || response.statusText;
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return data;
+}
 
 /* ============================================================
    Formatting
@@ -2108,6 +2129,98 @@ function Login({ email, setEmail, password, setPassword, onSubmit, error, loadin
   );
 }
 
+function Register({ onRegistered }) {
+  const params = new URLSearchParams(window.location.search);
+  const invitedEmail = params.get('email') || '';
+  const inviteToken = params.get('token') || '';
+  const [form, setForm] = useState({
+    email: invitedEmail,
+    name: '',
+    password: '',
+    confirmPassword: '',
+  });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    if (!inviteToken) {
+      setError('Invite token is missing. Please use the full invite link.');
+      return;
+    }
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    setLoading(true);
+    try {
+      await publicApiRequest('/auth/register', {
+        method: 'POST',
+        body: {
+          invite_token: inviteToken,
+          email: form.email.trim(),
+          name: form.name.trim(),
+          password: form.password,
+        },
+      });
+      const login = await publicApiRequest('/auth/login', {
+        method: 'POST',
+        body: { email: form.email.trim(), password: form.password },
+      });
+      replaceBrowserPath('/');
+      onRegistered(login);
+    } catch (err) {
+      setError(err.message || 'Registration failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-2)', padding: 24 }}>
+      <form onSubmit={submit} style={{ width: 'min(420px, 100%)', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-card)', padding: '34px 30px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/saaspro-mark.png" alt="SaaSPro Labs" style={{ width: 40, height: 40, borderRadius: 9, display: 'block' }} />
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Invite registration</p>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, margin: '2px 0 0' }}>Create dashboard account</h1>
+          </div>
+        </div>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Email
+          <div className="search">
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              readOnly={!!invitedEmail}
+              placeholder="admin@example.com"
+              autoComplete="email"
+              required
+            />
+          </div>
+        </label>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Name
+          <div className="search"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Full name" autoComplete="name" required autoFocus /></div>
+        </label>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Password
+          <div className="search"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Create password" autoComplete="new-password" required /></div>
+        </label>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Confirm password
+          <div className="search"><input type="password" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} placeholder="Repeat password" autoComplete="new-password" required /></div>
+        </label>
+        {error ? <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--bad-ink)', background: 'var(--bad-bg)', border: '1px solid var(--bad-line)', borderRadius: 8, padding: '8px 12px' }}>{error}</div> : null}
+        <button className="btn indigo" type="submit" disabled={loading} style={{ justifyContent: 'center' }}>{loading ? 'Creating account...' : 'Create account'}</button>
+        <span className="eyebrow" style={{ textAlign: 'center' }}>You will continue to the Saaspro dashboard</span>
+      </form>
+    </main>
+  );
+}
+
 /* ============================================================
    App
    ============================================================ */
@@ -2205,6 +2318,7 @@ function AppInner() {
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
+  useEffect(() => { if (session && isInviteRegistrationRoute()) replaceBrowserPath('/'); }, [session]);
   // Platform-admin drill-in is view-only. When the active org context differs from
   // the user's own org, hide write actions and surface a banner so they can't
   // accidentally mutate the client's data through their own-org write endpoints.
@@ -2236,16 +2350,20 @@ function AppInner() {
     return data;
   }
 
+  function acceptSession(data) {
+    const next = { token: data.token, role: data.role, name: data.name, org_name: data.org_name };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    setSession(next);
+    setRole(next.role || 'admin');
+  }
+
   async function handleLogin(event) {
     event.preventDefault();
     setLoginError('');
     setLoginLoading(true);
     try {
       const data = await apiRequest('/auth/login', { method: 'POST', body: { email, password } });
-      const next = { token: data.token, role: data.role, name: data.name, org_name: data.org_name };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setSession(next);
-      setRole(next.role || 'admin');
+      acceptSession(data);
       setEmail('');
       setPassword('');
     } catch (err) {
@@ -2769,6 +2887,9 @@ function AppInner() {
   function openRequest(id) { setSelectedId(id); setDrawerOpen(true); }
 
   if (!session) {
+    if (isInviteRegistrationRoute()) {
+      return <Register onRegistered={acceptSession} />;
+    }
     return <Login email={email} setEmail={setEmail} password={password} setPassword={setPassword} onSubmit={handleLogin} error={loginError} loading={loginLoading} />;
   }
 
