@@ -1,6 +1,6 @@
 # SaaSPro Pre-Auth Operations Console
 
-The operations dashboard for SaaSPro's AI pre-authorization service. Operators (HMO admins + their teams, SaaSPro super-admins) sign in here to triage incoming pre-auth requests, audit agent decisions, manage their team + API keys, and — for super-admins — onboard new HMO clients.
+The operations dashboard for SaaSPro's AI pre-authorization service. Operators (HMO admins + their teams, SaaSPro's own admins) sign in here to triage incoming pre-auth requests, audit agent decisions, manage their team + API keys, and — for admins of the SaaSPro org — onboard new HMO clients.
 
 Connects to the backend at [`SaaSProX/preauth`](https://github.com/SaaSProX/preauth).
 
@@ -47,12 +47,12 @@ Every JSON dump has a **Copy** button that writes to the clipboard and pops a to
 - **Audit Trail** — type a `request_id` / `checkin_id` / `event_id` and replay it across the full pipeline.
 - **Team** — invite admins/members, remove members. Admin-only.
 - **API Keys** — generate named keys (e.g. "Aman prod webhook"), list with masked key + last-used timestamp, revoke individually. Admin-only.
-- **Onboarding** — super-admin only. Create new client orgs, invite their first admin, rename or deactivate existing orgs. The org list is also the entry point to **drill into another org's view** (read-only).
+- **Onboarding** — platform admin only. Create new client orgs, invite their first admin, rename or deactivate existing orgs. The org list is also the entry point to **drill into another org's view** (read-only).
 
 ### Roles + drill-in
 - **Admins** see write actions (invite, revoke, etc.).
 - **Members** see the same data, read-only. Write buttons are hidden via a global `body.role-member` CSS class.
-- **Super-admins** (admins of the platform org named `SAASPRO`) get the Onboarding nav item plus the ability to drill into any client org. When drilled in, the URL becomes `?org=<id>` and write actions hide (CSS class `body.drill-in-view`) — drill-in is view-only by design, with a banner explaining why.
+- **Admins of the `SAASPRO` org** (a.k.a. "platform admins") get the Onboarding nav item plus the ability to drill into any client org. When drilled in, the URL becomes `?org=<id>` and write actions hide (CSS class `body.drill-in-view`) — drill-in is view-only by design, with a banner explaining why. This isn't a separate role tier — they're regular admins who happen to belong to the SaaSPro org.
 
 ---
 
@@ -67,7 +67,7 @@ Backend reads org_id from the JWT
 WHERE org_id = $1   (every query)
 ```
 
-There is no concept of "see all orgs" except the explicit super-admin `?org_id=` drill-in, and that's gated server-side. If you're a regular HMO admin, you literally cannot see another HMO's data through this app.
+There is no concept of "see all orgs" except the explicit platform admin `?org_id=` drill-in, and that's gated server-side. If you're a regular HMO admin, you literally cannot see another HMO's data through this app.
 
 ---
 
@@ -108,7 +108,7 @@ The backend's `migrate.sql` plus the seeded test DB give you these accounts (pas
 
 | Email | Role | Org |
 |---|---|---|
-| `admin2@test.local` | admin (super-admin) | SAASPRO |
+| `admin2@test.local` | admin (sees Onboarding because org is SAASPRO) | SAASPRO |
 | `admin@test.local` | admin | AMAN |
 | `member@test.local` | member | AMAN |
 
@@ -134,7 +134,7 @@ public/
 ## Conventions
 
 - **Inline styles** are used for one-offs; design tokens (`var(--ink)`, `var(--indigo)`, etc.) come from `App.css`.
-- **`data-admin-only`** on a write-action element hides it for members AND for super-admins drilled into another org. Use it for any new write button.
+- **`data-admin-only`** on a write-action element hides it for members AND for SaaSPro admins drilled into another org. Use it for any new write button.
 - **`useToast()`** is available everywhere — `const { show } = useToast(); show('Saved!'); show('Error', 'bad');`. Use it for confirmations instead of bespoke banners.
 - **Drill-in state** is read from `?org=` on mount and on `popstate`; never read directly from `viewOrgId` outside the App-level handlers.
 

@@ -1021,7 +1021,7 @@ const NAV_ADMIN = [
 const NAV_PLATFORM = [
   { id: 'onboarding', label: 'Onboarding', live: true, lock: true },
 ];
-function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse, isSuperAdmin, onSignOut }) {
+function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse, isPlatformAdmin, onSignOut }) {
   const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
   const item = (n) => (
     <a key={n.id} className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`} href="#" title={collapsed ? n.label : undefined} onClick={(e) => { e.preventDefault(); onNav(n.id); }}>
@@ -1042,7 +1042,7 @@ function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleColla
         <div className="grp">Admin</div>
         {NAV_ADMIN.map(item)}
       </div>
-      {isSuperAdmin && (
+      {isPlatformAdmin && (
         <div className="nav-group">
           <div className="grp">Platform</div>
           {NAV_PLATFORM.map(item)}
@@ -1302,10 +1302,10 @@ function ApiKeyView({ data, error, notice, isAdmin, org, revealed, busy, onGener
 }
 
 /* ============================================================
-   Onboarding (SaaSPro super-admin: cross-org platform view)
+   Onboarding (SaaSPro platform admin: cross-org platform view)
    ============================================================ */
-function OnboardingView({ data, loading, error, isSuperAdmin, orgName, setOrgName, adminEmail, setAdminEmail, onCreate, creating, created, createError, onResetCreate, onSelectOrg, onRenameOrg, onToggleActive }) {
-  if (!isSuperAdmin) {
+function OnboardingView({ data, loading, error, isPlatformAdmin, orgName, setOrgName, adminEmail, setAdminEmail, onCreate, creating, created, createError, onResetCreate, onSelectOrg, onRenameOrg, onToggleActive }) {
+  if (!isPlatformAdmin) {
     return (
       <>
         <div className="stub-head"><h1 className="page-title">Onboarding</h1></div>
@@ -1355,7 +1355,7 @@ function OnboardingView({ data, loading, error, isSuperAdmin, orgName, setOrgNam
         </div>
         <div className="metric">
           <h3>How this works</h3>
-          <p className="desc">Members and admins live inside a single client org. SaaSPro super-admins (admins of the platform org) can spin up new client orgs and invite their first admin from here — no CLI required.</p>
+          <p className="desc">Members and admins live inside a single client org. SaaSPro platform admins (admins of the SAASPRO org) can spin up new client orgs and invite their first admin from here — no CLI required.</p>
           <ol style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.7, marginTop: 12, paddingLeft: 18 }}>
             <li>Create the org and the first admin's invite.</li>
             <li>The admin opens the link, sets a password, signs in.</li>
@@ -1571,7 +1571,7 @@ function AppInner() {
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [createdOrg, setCreatedOrg] = useState(null);
   const [createOrgError, setCreateOrgError] = useState('');
-  const [viewOrgId, setViewOrgId] = useState(null); // { id, name } when a super-admin is drilled into another org
+  const [viewOrgId, setViewOrgId] = useState(null); // { id, name } when a platform admin is drilled into another org
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 25;
   const [dateFrom, setDateFrom] = useState('');
@@ -1588,7 +1588,7 @@ function AppInner() {
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
-  // Super-admin drill-in is view-only. When the active org context differs from
+  // Platform-admin drill-in is view-only. When the active org context differs from
   // the user's own org, hide write actions and surface a banner so they can't
   // accidentally mutate the client's data through their own-org write endpoints.
   useEffect(() => {
@@ -1834,7 +1834,7 @@ function AppInner() {
     urlSetOrg(null);
   }
 
-  // After login: parse ?org= and restore drill-in. Non-super-admins ignore it.
+  // After login: parse ?org= and restore drill-in. Non-platform-admins ignore it.
   // The org name is resolved from the loaded orgs list, or shows '…' until
   // the list lands. Also fires loadOrgs if the list isn't loaded yet.
   useEffect(() => {
@@ -1997,7 +1997,10 @@ function AppInner() {
   }
 
   const refreshedLabel = loading ? 'Refreshing…' : (lastLoaded ? `Refreshed ${timeAgo(new Date(lastLoaded).toISOString())}` : 'Connecting…');
-  const isSuperAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+  // Platform admin = admin of the SaaSPro platform org. There's no separate
+  // role tier — this is just "admin + org is SAASPRO". An admin of any other
+  // org (e.g. AMAN) is just an admin of that org.
+  const isPlatformAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
   const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
 
   // chart inputs from the real daily series + summary
@@ -2018,14 +2021,14 @@ function AppInner() {
   return (
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
-      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} isSuperAdmin={isSuperAdmin} onSignOut={signOut} />
+      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} isPlatformAdmin={isPlatformAdmin} onSignOut={signOut} />
 
       <main className="main">
         {viewOrgId && viewOrgId.name !== session.org_name ? (
           <div className="ro-banner" style={{ display: 'flex', alignItems: 'center', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
             <span className="led" style={{ background: 'var(--indigo)' }} />
             <span>
-              Viewing as super-admin · scoped to <b>{viewOrgId.name}</b>
+              Viewing as platform admin · scoped to <b>{viewOrgId.name}</b>
               <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
                 Read-only drill-in — changes you make would land in <b>{session.org_name}</b>, so write actions are hidden. Switch back to manage <b>{viewOrgId.name}</b>'s team, keys or org settings via their own admin.
               </span>
@@ -2190,7 +2193,7 @@ function AppInner() {
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
               : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
-              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
+              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isPlatformAdmin={isPlatformAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
               : <StubView id={activeNav} session={session} />}
           </section>
         )}

@@ -449,8 +449,9 @@ img, svg { display: block; }
 .ro-banner { display: none; align-items: center; gap: 10px; background: var(--recv-bg); border: 1px solid var(--recv-line); color: var(--recv-ink); font-family: var(--mono); font-size: 12px; border-radius: 9px; padding: 9px 14px; margin-bottom: 20px; }
 .role-member .ro-banner { display: flex; }
 .role-member [data-admin-only] { display: none !important; }
-/* Super-admin drill-in is view-only: writes would land in the super-admin's
-   own org, not the org being viewed. Hide write actions across all views. */
+/* Platform-admin drill-in is view-only: writes would land in the platform
+   admin's own (SaaSPro) org, not the org being viewed. Hide write actions
+   across all views. */
 .drill-in-view [data-admin-only] { display: none !important; }
 
 /* layout helpers */
