@@ -769,12 +769,14 @@ function QueueHead() {
   return (
     <div className="qhead">
       <span>Reference</span><span>Patient</span><span>Plan</span><span>Item</span>
-      <span style={{ textAlign: 'right' }}>Amount</span><span style={{ textAlign: 'right' }}>Status · latency</span><span style={{ textAlign: 'right' }}>Received</span>
+      <span style={{ textAlign: 'right' }}>Amount</span><span style={{ textAlign: 'right' }}>Status · latency</span><span style={{ textAlign: 'right' }}>Received</span><span style={{ textAlign: 'right' }}>Action</span>
     </div>
   );
 }
-function QueueRow({ r, selected, onSelect, onOpenPatient }) {
+const RETRYABLE_REQUEST_STATUSES = new Set(['pending', 'processing', 'received', 'error']);
+function QueueRow({ r, selected, onSelect, onOpenPatient, canRetry, retrying, onRetry }) {
   const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
+  const retryable = RETRYABLE_REQUEST_STATUSES.has(r.status);
   return (
     <div className={`qrow ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
       <div className="ref">{ref}<small>{r.checkin_type} · {r.item_type || '—'}</small></div>
@@ -800,6 +802,20 @@ function QueueRow({ r, selected, onSelect, onOpenPatient }) {
       <div className="amt">{fmtNGN(r.requested_amount)}</div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}><Pill status={r.status} /><span className="lat">{fmtSecs(r.processing_seconds)}</span></div>
       <div className="when">{r.received_label}</div>
+      <div className="qaction">
+        {canRetry && retryable ? (
+          <button
+            className="btn sm"
+            disabled={retrying}
+            onClick={(e) => { e.stopPropagation(); onRetry?.(r.request_id); }}
+            data-tip="Clear stale agent output and re-run the decision pipeline for this PA."
+            data-tip-pos="below"
+            data-tip-align="right"
+          >
+            {retrying ? 'Retrying…' : 'Retry'}
+          </button>
+        ) : <span className="muted mono">—</span>}
+      </div>
     </div>
   );
 }
@@ -2299,6 +2315,10 @@ function AppInner() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [retryingRequests, setRetryingRequests] = useState(() => new Set());
+  const [retryAllBusy, setRetryAllBusy] = useState(false);
+  const [retryNotice, setRetryNotice] = useState('');
+  const [retryError, setRetryError] = useState('');
   const [activeNav, setActiveNav] = useState(() => {
     try { return new URLSearchParams(window.location.search).get('nav') || 'intake'; }
     catch { return 'intake'; }
@@ -2453,6 +2473,57 @@ function AppInner() {
     } finally {
       if (!silent) setLoading(false);
       if (!silent) setSwitchingOrg(false);
+    }
+  }
+
+  async function retryPreauthRequest(requestId) {
+    if (!session?.token || !requestId) return;
+    setRetryNotice('');
+    setRetryError('');
+    setRetryingRequests((current) => new Set([...current, requestId]));
+    try {
+      await apiRequest('/auth/preauth/retry', {
+        method: 'POST',
+        body: {
+          request_id: requestId,
+          ...(viewOrgId ? { org_id: viewOrgId.id } : {}),
+        },
+      });
+      setRetryNotice(`Retry queued for ${requestId}`);
+      await loadDashboard({ silent: true });
+    } catch (err) {
+      setRetryError(err.message || 'Could not retry request');
+    } finally {
+      setRetryingRequests((current) => {
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+    }
+  }
+
+  async function retryAllPendingPreauths() {
+    if (!session?.token) return;
+    setRetryNotice('');
+    setRetryError('');
+    setRetryAllBusy(true);
+    try {
+      const res = await apiRequest('/auth/preauth/retry-pending', {
+        method: 'POST',
+        body: {
+          ...(viewOrgId ? { org_id: viewOrgId.id } : {}),
+          date_from: dateFrom || null,
+          date_to: dateTo || null,
+          q: (debouncedQuery || query || '').trim() || null,
+          limit: 500,
+        },
+      });
+      setRetryNotice(`${res.queued_count || 0} pending request${res.queued_count === 1 ? '' : 's'} queued for retry`);
+      await loadDashboard({ silent: true });
+    } catch (err) {
+      setRetryError(err.message || 'Could not retry pending requests');
+    } finally {
+      setRetryAllBusy(false);
     }
   }
 
@@ -2962,6 +3033,7 @@ function AppInner() {
   // role tier — this is just "admin + org is SAASPRO". An admin of any other
   // org (e.g. AMAN) is just an admin of that org.
   const isPlatformAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+  const canRetryRequests = session.role === 'admin';
   const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
 
   // chart inputs from the real daily series + summary
@@ -2975,6 +3047,8 @@ function AppInner() {
   const paLineItems = summary.added_line_items ?? summary.current_snapshot_line_items ?? 0;
   const decided = (summary.approved || 0) + (summary.denied || 0) + (summary.escalated || 0);
   const approvalRate = decided ? Math.round((summary.approved / decided) * 100) : 0;
+  const visibleRetryableCount = filtered.filter((r) => RETRYABLE_REQUEST_STATUSES.has(r.status)).length;
+  const retryableSummaryCount = (summary.pending || 0) + (summary.processing || 0) + (summary.errors || 0);
   const outcomeSplit = [
     { k: 'Approved', v: summary.approved || 0, c: 'var(--ok)' },
     { k: 'Denied', v: summary.denied || 0, c: 'var(--bad)' },
@@ -3065,6 +3139,17 @@ function AppInner() {
                 </p>
               </div>
               <div className="page-actions">
+                {canRetryRequests ? (
+                  <button
+                    className="btn"
+                    disabled={retryAllBusy || loading || (retryableSummaryCount === 0 && visibleRetryableCount === 0)}
+                    onClick={retryAllPendingPreauths}
+                    data-tip="Re-run all pending, processing, received, and error PAs in the current date/search window."
+                    data-tip-pos="below"
+                  >
+                    {retryAllBusy ? 'Retrying pending…' : 'Retry all pending'}
+                  </button>
+                ) : null}
                 <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconRefresh /></button>
                 <button className="btn primary" data-admin-only="">Export report <IconExport /></button>
               </div>
@@ -3078,6 +3163,8 @@ function AppInner() {
             {activeTab === 'dashboard' ? (
               <div id="tab-dashboard" className="loading-host dashboard-loading-host">
                 <LoadingOverlay show={loading} label={switchingOrg ? 'Switching organization' : (dashboard ? 'Updating dashboard' : 'Loading dashboard')} />
+                {retryNotice ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {retryNotice}</div> : null}
+                {retryError ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {retryError}</div> : null}
                 <div className="section-gap" style={{ marginTop: 24 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
                     <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Queue filters</h2>
@@ -3153,7 +3240,16 @@ function AppInner() {
                     <QueueHead />
                     <div>
                       {filtered.map((r) => (
-                        <QueueRow key={r.request_id} r={r} selected={selected?.request_id === r.request_id && drawerOpen} onSelect={openRequest} onOpenPatient={(pid) => navigateTo({ nav: 'patients', patient_id: pid })} />
+                        <QueueRow
+                          key={r.request_id}
+                          r={r}
+                          selected={selected?.request_id === r.request_id && drawerOpen}
+                          onSelect={openRequest}
+                          onOpenPatient={(pid) => navigateTo({ nav: 'patients', patient_id: pid })}
+                          canRetry={canRetryRequests}
+                          retrying={retryingRequests.has(r.request_id)}
+                          onRetry={retryPreauthRequest}
+                        />
                       ))}
                       {!filtered.length && (
                         <div className="stub-empty" style={{ padding: '60px 24px' }}>
