@@ -171,6 +171,82 @@ function chartHBars(data, { accent = 'var(--indigo)' } = {}) {
    ============================================================ */
 function asObj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
 function asArr(v) { return Array.isArray(v) ? v : []; }
+
+// ── PA event-timeline helpers (ported from origin/main / kalycoding) ──────
+// His /auth/preauth-events endpoint returns one row per intake webhook for
+// a single check-in. These helpers normalize the fields his payloads carry.
+function _evtNum(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+function eventValue(event) { return _evtNum(event?.items_added_total) ?? _evtNum(event?.total_requested_cost) ?? 0; }
+function eventItemCount(event) { return _evtNum(event?.items_added_count) ?? _evtNum(event?.item_count) ?? 0; }
+function closeNumberMatch(a, b) {
+  const x = _evtNum(a); const y = _evtNum(b);
+  return x !== null && y !== null && Math.abs(x - y) < 0.01;
+}
+function itemRequestedCost(it) {
+  const direct = _evtNum(it?.requested_cost) ?? _evtNum(it?.estimated_cost) ?? _evtNum(it?.cost) ?? _evtNum(it?.amount);
+  if (direct != null && direct) return direct;
+  const u = _evtNum(it?.unit_cost); const q = _evtNum(it?.quantity) || 1;
+  return u != null ? u * q : 0;
+}
+function itemsAddedFromEvent(event) {
+  const payload = asObj(event?.raw_payload);
+  const added = asArr(payload?.submission?.items_added);
+  const pa = asArr(payload?.pa_items).length ? asArr(payload?.pa_items) : asArr(asObj(event?.extracted_fields)?.items);
+  const used = new Set();
+  if (added.length) {
+    return added.map((it, idx) => {
+      const id = it?.id;
+      const candidate = pa
+        .map((p, pi) => ({ p, pi }))
+        .filter(({ p, pi }) => {
+          const key = p?.claim_item_id || `${p?.facility_tariff_item_id || 'item'}-${pi}`;
+          if (used.has(key)) return false;
+          const qm = closeNumberMatch(p?.quantity, it?.quantity);
+          const am = closeNumberMatch(p?.requested_cost, it?.requested_cost);
+          return (
+            String(p?.facility_tariff_item_id || '') === String(id || '') ||
+            String(p?.claim_item_id || '') === String(id || '') ||
+            (qm && am) ||
+            (pi === idx && added.length === pa.length)
+          );
+        })
+        .sort((l, r) => {
+          const score = ({ p, pi }) => {
+            const idMatch = String(p?.facility_tariff_item_id || '') === String(id || '') || String(p?.claim_item_id || '') === String(id || '');
+            const qm = closeNumberMatch(p?.quantity, it?.quantity);
+            const am = closeNumberMatch(p?.requested_cost, it?.requested_cost);
+            const om = pi === idx && added.length === pa.length;
+            const pen = String(p?.status || '').toLowerCase() === 'pending';
+            if (idMatch && qm && am && pen) return 0;
+            if (idMatch && qm && am) return 1;
+            if (qm && am && om && pen) return 2;
+            if (qm && am && om) return 3;
+            if (qm && am && pen) return 4;
+            if (qm && am) return 5;
+            if (om && pen) return 6;
+            if (om) return 7;
+            return 8;
+          };
+          return score(l) - score(r);
+        });
+      const m = candidate[0]?.p;
+      const key = m?.claim_item_id || (m ? `${m?.facility_tariff_item_id || 'item'}-${candidate[0]?.pi}` : null);
+      if (key) used.add(key);
+      return {
+        id: m?.claim_item_id || `${event?.event_id || 'event'}-${idx}-${id || 'item'}`,
+        name: m?.item_name || m?.description || m?.name || `Item ${id || idx + 1}`,
+        quantity: it?.quantity ?? m?.quantity ?? 1,
+        requested_cost: _evtNum(it?.requested_cost) ?? itemRequestedCost(m || it),
+      };
+    });
+  }
+  return pa.map((it, idx) => ({
+    id: it?.claim_item_id || it?.facility_tariff_item_id || `${event?.event_id || 'event'}-${idx}`,
+    name: it?.item_name || it?.description || it?.name || `Item ${idx + 1}`,
+    quantity: it?.quantity ?? 1,
+    requested_cost: itemRequestedCost(it),
+  }));
+}
 function providerLabel(v) {
   if (!v) return '';
   if (typeof v === 'object') return v.name || v.role || v.email || '';
@@ -784,7 +860,7 @@ function AgentTimeline({ r }) {
     </div>
   );
 }
-function DetailView({ r, siblings, onSelectSibling }) {
+function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError }) {
   if (!r) return null;
   return (
     <div className="detail">
@@ -819,6 +895,65 @@ function DetailView({ r, siblings, onSelectSibling }) {
           </div>
         </div>
       ) : null}
+      {(paEvents && paEvents.length) || paEventsLoading || paEventsError || (r.event_count && r.event_count > 0) ? (
+        <div>
+          <div className="sec-h">PA event timeline <span className="n">{(paEvents || []).length || r.event_count || 0}</span></div>
+          {paEventsError ? (
+            <div style={{ padding: '10px 12px', background: 'var(--bad-bg)', color: 'var(--bad-ink)', border: '1px solid var(--bad-line)', borderRadius: 9, fontSize: 12, fontFamily: 'var(--mono)' }}>
+              Couldn't load events: {paEventsError}
+            </div>
+          ) : null}
+          {paEventsLoading && !(paEvents || []).length ? (
+            <div className="muted mono" style={{ fontSize: 12, padding: '8px 2px' }}>Loading event history…</div>
+          ) : null}
+          {(paEvents || []).length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+              {paEvents.map((event) => {
+                const seq = _evtNum(event.event_sequence) || 0;
+                const items = itemsAddedFromEvent(event);
+                const when = event.submitted_at || event.occurred_at || event.created_at;
+                return (
+                  <div key={event.event_id || event.id} style={{ display: 'grid', gridTemplateColumns: '32px 1fr', gap: 10 }}>
+                    <div style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: seq <= 1 ? 'var(--indigo)' : 'var(--ink)', color: '#fff', fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700 }}>{seq || '?'}</div>
+                    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
+                        <b style={{ fontSize: 13 }}>{seq <= 1 ? 'First captured event' : 'Additional items added'}</b>
+                        <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>{fmtNGNfull(eventValue(event))}</span>
+                      </div>
+                      <div className="muted mono" style={{ fontSize: 11, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        <span>{eventItemCount(event)} line item{eventItemCount(event) === 1 ? '' : 's'}</span>
+                        <span>· Snapshot: {fmtNGNfull(event.total_requested_cost)}</span>
+                        {when ? <span>· {timeAgo(when)}</span> : null}
+                      </div>
+                      {items && items.length ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                          {items.map((it) => (
+                            <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 110px', gap: 8, alignItems: 'center', padding: '6px 9px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 7 }}>
+                              <span style={{ fontSize: 12 }}>{it.name}</span>
+                              <span className="muted mono" style={{ fontSize: 11 }}>×{it.quantity}</span>
+                              <span className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{fmtNGNfull(it.requested_cost)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>
+                      )}
+                      <details style={{ marginTop: 8 }}>
+                        <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>Event JSON</summary>
+                        <CodeBlock data={event.raw_payload || event.payload_summary || event} style={{ marginTop: 6 }} />
+                      </details>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !paEventsLoading && !paEventsError ? (
+            <div className="muted mono" style={{ fontSize: 12, padding: '8px 2px' }}>
+              No event history yet — request captured before event tracking, or backend returned none.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div>
         <div className="sec-h">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
         <AgentTimeline r={r} />
@@ -833,7 +968,7 @@ function DetailView({ r, siblings, onSelectSibling }) {
     </div>
   );
 }
-function Drawer({ request, open, onClose, siblings, onSelectSibling }) {
+function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError }) {
   return (
     <>
       <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} />
@@ -841,7 +976,7 @@ function Drawer({ request, open, onClose, siblings, onSelectSibling }) {
         <button className="icon-btn dclose" onClick={onClose} aria-label="Close">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
-        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} /> : null}</div></div>
+        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} paEvents={paEvents} paEventsLoading={paEventsLoading} paEventsError={paEventsError} /> : null}</div></div>
       </aside>
     </>
   );
@@ -1447,6 +1582,9 @@ function AppInner() {
   // Full patient history for the currently-open drawer. Fetched on demand so
   // siblings show across pages, not just within the visible 25.
   const [patientHistory, setPatientHistory] = useState({ patient_id: null, requests: [] });
+  // PA event timeline for the currently-open drawer (origin/main feature).
+  // Fetched from /auth/preauth-events when the drawer opens.
+  const [paEvents, setPaEvents] = useState({ checkin_id: null, events: [], loading: false, error: '' });
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -1795,6 +1933,37 @@ function AppInner() {
   const siblings = (selected && patientHistory.patient_id === selected.patient_id)
     ? patientHistory.requests.filter((r) => r.request_id !== selected.request_id)
     : [];
+  const eventsForSelected = (selected && paEvents.checkin_id === (selected.display_request_id || selected.request_id))
+    ? paEvents.events : [];
+
+  // Fetch the PA event timeline for the drawer's selected request. Keyed on
+  // the check-in id (or request_id fallback) — what kalycoding's endpoint
+  // expects. Resets when the selection changes or the drawer closes.
+  useEffect(() => {
+    if (!selected) {
+      setPaEvents({ checkin_id: null, events: [], loading: false, error: '' });
+      return undefined;
+    }
+    const checkin = selected.display_request_id || selected.request_id;
+    if (paEvents.checkin_id === checkin) return undefined;
+    let cancelled = false;
+    setPaEvents((s) => ({ ...s, loading: true, error: '' }));
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        qs.set('checkin_id', checkin);
+        qs.set('include_payload', 'true');
+        qs.set('limit', '25');
+        const data = await apiRequest('/auth/preauth-events?' + qs.toString());
+        const events = asArr(data?.events).sort((a, b) => (_evtNum(a.event_sequence) || 0) - (_evtNum(b.event_sequence) || 0));
+        if (!cancelled) setPaEvents({ checkin_id: checkin, events, loading: false, error: '' });
+      } catch (err) {
+        if (!cancelled) setPaEvents({ checkin_id: checkin, events: [], loading: false, error: err?.message || 'Could not load event history' });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [selected?.request_id]);
 
   // Fetch the full PA history for the patient whose drawer is open. Skips bare
   // 'unknown' / '—' so we don't try to lump unrelated parse-failure rows.
@@ -2028,7 +2197,7 @@ function AppInner() {
       </main>
 
       <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
-      <Drawer request={selected} siblings={siblings} onSelectSibling={openRequest} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Drawer request={selected} siblings={siblings} onSelectSibling={openRequest} open={drawerOpen} onClose={() => setDrawerOpen(false)} paEvents={eventsForSelected} paEventsLoading={paEvents.loading} paEventsError={paEvents.error} />
     </div>
   );
 }
