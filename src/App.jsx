@@ -2886,7 +2886,7 @@ function AppInner() {
 
             {activeTab === 'dashboard' ? (
               <div id="tab-dashboard" className="loading-host dashboard-loading-host">
-                <LoadingOverlay show={loading && !!dashboard} label="Updating dashboard" />
+                <LoadingOverlay show={loading} label={dashboard ? 'Updating dashboard' : 'Loading dashboard'} />
                 <div className="section-gap" style={{ marginTop: 24 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
                     <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Queue filters</h2>
