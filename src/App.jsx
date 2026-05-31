@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, createContext, useContext, useCallback, useRef } from 'react';
+import { PatientReportSheet } from './report.jsx';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
@@ -1363,6 +1364,9 @@ function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, 
 }
 
 function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, onDownloadPdf, session, orgName }) {
+  // `patient.requests` come from /auth/patient-history (un-mapped). The
+  // detail rows below run them through mapRequest; the ReportSheet also
+  // wants the mapped shape (with items, stages, etc).
   const requests = (patient?.requests || []).map(mapRequest);
   // Aggregate the same shape /auth/patients returns, but client-side from the
   // full /patient-history payload (more accurate than the index aggregate).
@@ -1372,20 +1376,15 @@ function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, 
   const header = requests[0] || {};
   return (
     <>
-      {/* Print-only audit banner — embedded in the PDF so the export
-          carries its own provenance. */}
-      <div className="print-only" style={{ borderBottom: '2px solid #000', paddingBottom: 10, marginBottom: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-          <strong style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>SaaSPro · Pre-Auth Investigation Report</strong>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#444' }}>Confidential · Internal use only</span>
-        </div>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#222', lineHeight: 1.6 }}>
-          <div><b>Patient:</b> {patient?.requests?.[0]?.patient_name || 'Unnamed enrollee'} &nbsp;·&nbsp; <b>ID:</b> {patient?.patient_id || '—'}</div>
-          <div><b>Org:</b> {orgName || session?.org_name || '—'}</div>
-          <div><b>Downloaded by:</b> {session?.name || '—'} &lt;{session?.email || '—'}&gt; ({session?.role || 'admin'})</div>
-          <div><b>Downloaded at:</b> {new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'long' })}</div>
-        </div>
-      </div>
+      {/* PDF report portal — rendered into document.body, hidden on screen.
+          @media print hides everything else and reveals only this. The
+          audit metadata (downloaded by, downloaded at) is baked into it. */}
+      <PatientReportSheet
+        patient={patient}
+        requests={(patient?.requests || []).map(mapRequest)}
+        session={session}
+        orgName={orgName}
+      />
       <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <button className="btn sm" onClick={onBack} data-tip="Return to the patients list." data-tip-align="left">← Back to patients</button>
         <span style={{ flex: 1 }} />

@@ -451,51 +451,230 @@ img, svg { display: block; }
 .role-member [data-admin-only] { display: none !important; }
 
 /* ============================================================
-   Print / PDF export — used when an operator downloads a patient
-   page as PDF. Hides chrome, expands collapsible details, ensures
-   page breaks land cleanly between PAs, and shows the audit header.
+   Print / PDF export — the .report-sheet-portal contains the full
+   designed report (built in src/report.jsx). On screen it's hidden;
+   in @media print everything else is hidden and the portal is the
+   only thing rendered.
    ============================================================ */
 .print-only { display: none; }
+.report-sheet-portal { display: none; }
+.no-print { /* no-op on screen */ }
+
 @media print {
-  /* Hide chrome */
-  .statusbar, .side, .askbar-wrap, .drawer-scrim, .drawer,
+  /* Hide the entire dashboard chrome + content */
+  body > *:not(.report-sheet-portal) { display: none !important; }
   .no-print, [data-no-print] { display: none !important; }
 
-  /* Reset layout — the app's grid template hides the main column when
-     the sidebar is gone, so override. */
-  body, .app, .main {
-    display: block !important;
-    grid-template-columns: 1fr !important;
-    background: #fff !important;
-    color: #000 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-  }
-  .main { padding: 24px 0 0 !important; }
-
-  /* Show print-only blocks */
-  .print-only { display: block !important; }
-
-  /* Force every <details> to be open in print */
-  details > summary { list-style: none; }
-  details:not([open]) > *:not(summary) { display: revert !important; }
-  details { open: true; }
-
-  /* Don't split a PA card across pages if we can avoid it */
-  .pa-print-card { page-break-inside: avoid; break-inside: avoid; }
-  .pa-print-card + .pa-print-card { page-break-before: always; }
-
-  /* Tone down decoration */
-  .toolbar, .qhead, .drawer-scrim { display: none !important; }
-  .ro-banner { background: #f5f5f5 !important; color: #000 !important; border-color: #ccc !important; }
+  /* Reveal the report portal */
+  .report-sheet-portal { display: block !important; }
+  body { background: #fff !important; color: #000 !important; margin: 0 !important; padding: 0 !important; }
 
   /* Hide tooltips entirely */
   [data-tip]::after { display: none !important; }
+}
 
-  /* Page setup */
+/* ============================================================
+   SaaSPro Pre-Auth Investigation Report — paper styles
+   Layers on top of the dashboard's tokens + base components
+   (.pill, .decision, .timeline, .stage, .dgrid, .sec-h, .conf,
+   .plan-tag). The report is rendered into a portal on the patient
+   detail page; only @media print reveals it.
+   ============================================================ */
+:root { --paper-pad: 15mm; }
+
+.report-sheet-portal { background: #fff; }
+.report-sheet-portal .paper-stage { padding: 0; display: block; }
+.report-sheet-portal .sheet {
+  width: auto; max-width: none;
+  background: var(--bg);
+  padding: var(--paper-pad);
+  margin: 0;
+}
+
+/* ---- masthead ---- */
+.report-sheet-portal .rpt-mast {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding-bottom: 16px; border-bottom: 2px solid var(--ink);
+}
+.report-sheet-portal .rpt-brand { display: flex; align-items: center; gap: 10px; }
+.report-sheet-portal .rpt-mark { width: 30px; height: 30px; border-radius: 8px; background: url('/saaspro-mark.png') center / cover no-repeat; flex: none; }
+.report-sheet-portal .rpt-mark.sm { width: 18px; height: 18px; border-radius: 5px; }
+.report-sheet-portal .rpt-word { font-family: var(--mono); font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
+.report-sheet-portal .rpt-mast-r { text-align: right; flex: none; }
+.report-sheet-portal .rpt-doc { font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.report-sheet-portal .rpt-class { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--bad-ink); text-transform: uppercase; margin-top: 3px; }
+
+/* ---- title block ---- */
+.report-sheet-portal .rpt-title { padding: 26px 0 22px; border-bottom: 1px solid var(--line); }
+.report-sheet-portal .rt-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.report-sheet-portal .rt-name { font-family: var(--mono); font-size: 34px; font-weight: 500; letter-spacing: -.02em; margin: 8px 0 0; color: var(--ink); }
+.report-sheet-portal .rt-sub { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.report-sheet-portal .rt-id { font-family: var(--mono); font-size: 14px; color: var(--ink-2); }
+.report-sheet-portal .rt-meta {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 24px;
+  margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--line-2);
+}
+.report-sheet-portal .rt-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.report-sheet-portal .rt-l { font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
+.report-sheet-portal .rt-v { font-family: var(--mono); font-size: 13px; color: var(--ink); word-break: break-word; }
+.report-sheet-portal .rt-v .mtag { font-size: 10px; color: var(--indigo); background: var(--tint); border: 1px solid var(--indigo-soft); border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+.report-sheet-portal .rt-note { font-size: 12.5px; color: var(--ink-3); margin: 18px 0 0; max-width: 62ch; }
+
+/* ---- summary strip ---- */
+.report-sheet-portal .rpt-summary {
+  display: flex; align-items: stretch; gap: 18px; flex-wrap: wrap;
+  margin: 22px 0; padding: 18px 22px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-lg);
+}
+.report-sheet-portal .rs-stat { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.report-sheet-portal .rs-grow { flex: 1; min-width: 200px; }
+.report-sheet-portal .rs-l { font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
+.report-sheet-portal .rs-v { font-family: var(--mono); font-size: 24px; font-weight: 600; letter-spacing: -.02em; line-height: 1; color: var(--ink); }
+.report-sheet-portal .rs-ok { color: var(--ok-ink); }
+.report-sheet-portal .rs-div { width: 1px; background: var(--line-2); align-self: stretch; }
+.report-sheet-portal .rs-mix { display: flex; flex-wrap: wrap; gap: 6px; }
+.report-sheet-portal .mix-pill { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink-2); }
+.report-sheet-portal .mix-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.report-sheet-portal .mix-pill.approve { color: var(--ok-ink); background: var(--ok-bg); border-color: var(--ok-line); }
+.report-sheet-portal .mix-pill.deny    { color: var(--bad-ink); background: var(--bad-bg); border-color: var(--bad-line); }
+.report-sheet-portal .mix-pill.escalate{ color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn-line); }
+.report-sheet-portal .mix-pill.processing,
+.report-sheet-portal .mix-pill.pending,
+.report-sheet-portal .mix-pill.received,
+.report-sheet-portal .mix-pill.error { color: var(--slate-ink); background: var(--slate-bg); border-color: var(--slate-line); }
+
+/* ---- PA section ---- */
+.report-sheet-portal .rpt-pa { margin-top: 30px; }
+.report-sheet-portal .pa-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 11px 16px; border-radius: 10px 10px 0 0;
+  background: var(--ink); color: #fff;
+}
+.report-sheet-portal .pa-bar-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.report-sheet-portal .pa-seq { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; color: var(--ink-4); background: rgba(255,255,255,.08); padding: 3px 8px; border-radius: 5px; }
+.report-sheet-portal .pa-ref { font-family: var(--mono); font-size: 13px; letter-spacing: -.01em; }
+.report-sheet-portal .pa-bar-r { display: flex; align-items: center; gap: 12px; flex: none; }
+.report-sheet-portal .pa-bar-r .pill { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.2); color: #fff; }
+.report-sheet-portal .pa-bar-r .pa-amt { font-family: var(--mono); font-size: 13px; }
+.report-sheet-portal .pa-bar-r .pa-when { font-family: var(--mono); font-size: 11px; color: var(--ink-4); }
+
+.report-sheet-portal .rpt-pa .decision { border-radius: 0; border-left: 1px solid; border-right: 1px solid; border-top: none; }
+.report-sheet-portal .rpt-pa .decision.approve { border-color: var(--ok-line); }
+.report-sheet-portal .decision .reason { text-wrap: pretty; }
+.report-sheet-portal .decision .amt-line { margin-top: 14px; display: flex; gap: 30px; }
+.report-sheet-portal .decision .amt-line .lab { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
+.report-sheet-portal .decision .amt-line .av { font-family: var(--mono); font-size: 16px; }
+.report-sheet-portal .decision .amt-line .av.strong { font-weight: 600; color: var(--ok-ink); }
+
+.report-sheet-portal .rpt-block { margin-top: 22px; }
+.report-sheet-portal .timeline-block { break-inside: auto; }
+
+/* items table */
+.report-sheet-portal table.items { width: 100%; border-collapse: collapse; border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+.report-sheet-portal table.items thead th {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3);
+  text-align: left; padding: 10px 16px; background: var(--bg-2); border-bottom: 1px solid var(--line);
+}
+.report-sheet-portal table.items th.qty, .report-sheet-portal table.items td.qty,
+.report-sheet-portal table.items th.amt, .report-sheet-portal table.items td.amt { text-align: right; }
+.report-sheet-portal table.items th.cov, .report-sheet-portal table.items td.cov { text-align: right; width: 110px; }
+.report-sheet-portal table.items tbody td { padding: 11px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+.report-sheet-portal table.items tbody tr:last-child td { border-bottom: none; }
+.report-sheet-portal table.items td.qty, .report-sheet-portal table.items td.amt { font-family: var(--mono); font-size: 12.5px; }
+.report-sheet-portal .cov-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; }
+.report-sheet-portal .cov-tag.ok { color: var(--ok-ink); background: var(--ok-bg); border: 1px solid var(--ok-line); }
+.report-sheet-portal .cov-tag.no { color: var(--bad-ink); background: var(--bad-bg); border: 1px solid var(--bad-line); }
+
+/* agent runs */
+.report-sheet-portal .runs { display: flex; flex-direction: column; gap: 16px; }
+.report-sheet-portal .run { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; break-inside: avoid; }
+.report-sheet-portal .run-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 16px; background: var(--bg-2); border-bottom: 1px solid var(--line);
+}
+.report-sheet-portal .run-id { display: flex; align-items: center; gap: 10px; }
+.report-sheet-portal .run-num { width: 20px; height: 20px; border-radius: 6px; background: var(--ink); color: #fff; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.report-sheet-portal .run-label { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.report-sheet-portal .run-meta { display: flex; align-items: center; gap: 12px; }
+.report-sheet-portal .run-time { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.report-sheet-portal .run-oc { font-family: var(--mono); font-size: 10.5px; letter-spacing: .03em; padding: 3px 9px; border-radius: 6px; text-transform: uppercase; }
+.report-sheet-portal .run-oc.approve { color: var(--ok-ink); background: var(--ok-bg); border: 1px solid var(--ok-line); }
+.report-sheet-portal .run-oc.deny    { color: var(--bad-ink); background: var(--bad-bg); border: 1px solid var(--bad-line); }
+.report-sheet-portal .run-oc.escalate{ color: var(--warn-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); }
+.report-sheet-portal .run-oc.pending,
+.report-sheet-portal .run-oc.processing,
+.report-sheet-portal .run-oc.received { color: var(--slate-ink); background: var(--slate-bg); border: 1px solid var(--slate-line); }
+.report-sheet-portal .run-note { font-size: 12.5px; color: var(--ink-2); margin: 0; padding: 12px 16px 0; text-wrap: pretty; }
+.report-sheet-portal .run .timeline { padding: 16px 16px 4px; }
+
+.report-sheet-portal .stage .s-q { font-family: var(--sans); font-size: 12.5px; color: var(--ink-2); font-style: italic; margin: 6px 0 0; }
+.report-sheet-portal .stage .s-sum { margin-top: 5px; }
+.report-sheet-portal .s-checks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.report-sheet-portal .s-chk { font-family: var(--mono); font-size: 10.5px; padding: 3px 8px; border-radius: 6px; background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line); }
+.report-sheet-portal .s-chk.bad { background: var(--bad-bg); color: var(--bad-ink); border-color: var(--bad-line); }
+.report-sheet-portal .s-chk.neutral { background: var(--bg-2); color: var(--ink-2); border-color: var(--line-2); }
+.report-sheet-portal .s-excl { font-size: 12px; color: var(--bad-ink); background: var(--bad-bg); border: 1px solid var(--bad-line); border-radius: 8px; padding: 9px 12px; margin-top: 10px; text-wrap: pretty; }
+.report-sheet-portal .s-excl-l { display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; opacity: .8; margin-bottom: 3px; }
+.report-sheet-portal .s-limits { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; max-width: 380px; }
+.report-sheet-portal .s-meter .sm-top { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; margin-bottom: 5px; color: var(--ink); }
+.report-sheet-portal .s-meter .sm-fig em { color: var(--ink-3); font-style: normal; }
+.report-sheet-portal .s-meter .sm-bar { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
+.report-sheet-portal .s-meter .sm-bar i { display: block; height: 100%; background: var(--ok); border-radius: 999px; }
+.report-sheet-portal .s-thisreq { font-family: var(--mono); font-size: 12px; color: var(--ink-2); margin-top: 10px; }
+.report-sheet-portal .s-verdict { display: inline-flex; align-items: center; gap: 12px; margin-top: 11px; padding: 7px 12px; border-radius: 8px; background: var(--ok-bg); border: 1px solid var(--ok-line); }
+.report-sheet-portal .s-verdict .sv-d { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ok-ink); }
+.report-sheet-portal .s-verdict .sv-c, .report-sheet-portal .s-verdict .sv-a { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+
+/* appendix */
+.report-sheet-portal .rpt-appendix { margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--line); break-before: page; }
+.report-sheet-portal .apx-note { font-size: 12px; color: var(--ink-3); margin: 0 0 16px; }
+.report-sheet-portal .apx-pa { margin-bottom: 18px; }
+.report-sheet-portal .apx-ref { font-family: var(--mono); font-size: 12px; color: var(--ink); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px dashed var(--line-2); }
+.report-sheet-portal .apx-stage { margin-bottom: 12px; break-inside: avoid; }
+.report-sheet-portal .apx-stage-h { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-bottom: 6px; }
+.report-sheet-portal .apx-run { color: var(--indigo); }
+.report-sheet-portal .payload { border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); overflow: hidden; }
+.report-sheet-portal .pv-row { display: flex; gap: 12px; padding: 6px 12px; font-family: var(--mono); font-size: 11.5px; border-bottom: 1px solid var(--line); }
+.report-sheet-portal .pv-row:last-child { border-bottom: none; }
+.report-sheet-portal .pv-k { color: var(--ink-3); min-width: 160px; }
+.report-sheet-portal .pv-str { color: var(--ink); }
+.report-sheet-portal .pv-num { color: var(--indigo-ink); }
+.report-sheet-portal .pv-null { color: var(--ink-4); }
+.report-sheet-portal .pv-bool.true { color: var(--ok-ink); }
+.report-sheet-portal .pv-bool.false { color: var(--bad-ink); }
+
+.report-sheet-portal .rpt-end {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+}
+.report-sheet-portal .re-brand { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+
+/* fixed running footer — repeats on every printed page */
+.report-sheet-portal .print-foot { display: none; }
+
+@media print {
+  .report-sheet-portal { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .report-sheet-portal .rpt-pa { break-inside: auto; }
+  .report-sheet-portal .pa-bar,
+  .report-sheet-portal .decision,
+  .report-sheet-portal .run,
+  .report-sheet-portal .stage,
+  .report-sheet-portal .apx-stage,
+  .report-sheet-portal table.items tr { break-inside: avoid; }
+  .report-sheet-portal .rpt-summary { break-inside: avoid; }
+
+  .report-sheet-portal .print-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    position: fixed; left: 0; right: 0; bottom: 4mm;
+    font-family: var(--mono); font-size: 9px; letter-spacing: .03em; color: var(--ink-3);
+    padding: 0 1mm;
+  }
+  .report-sheet-portal .print-foot .pf-c { color: var(--bad-ink); }
+
   @page {
     size: A4;
-    margin: 16mm 14mm 18mm 14mm;
+    margin: 14mm 14mm 18mm;
   }
 }
 
