@@ -115,11 +115,24 @@ function planClass(p) {
   if (s.includes('bronze')) return 'bronze';
   return '';
 }
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function formatChartValue(value, { prefix = '', suffix = '' } = {}) {
+  const n = Number(value || 0);
+  const formatted = Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return `${prefix}${formatted}${suffix}`;
+}
 
 /* ============================================================
    SVG chart builders (ported from the prototype, return HTML strings)
    ============================================================ */
-function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)', labels = null } = {}) {
+function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)', labels = null, tooltipLabels = null, prefix = '', suffix = '' } = {}) {
   if (!data || !data.length) return '';
   const m = max || Math.max(...data) * 1.1 || 1;
   const pad = { l: 38, r: 8, t: 8, b: 22 };
@@ -131,7 +144,9 @@ function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)'
     const bh = (v / m) * ih;
     const x = pad.l + i * bw + (bw - barW) / 2;
     const y = pad.t + ih - bh;
-    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${accent}"/>`;
+    const label = tooltipLabels?.[i] || labels?.[i] || `Point ${i + 1}`;
+    const title = escapeHtml(`${label}: ${formatChartValue(v, { prefix, suffix })}`);
+    bars += `<g><title>${title}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${accent}"/><rect x="${(pad.l + i * bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent"/></g>`;
   });
   let grid = '', ylab = '';
   const ticks = 4;
@@ -149,7 +164,7 @@ function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)'
   });
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">${grid}${bars}${ylab}${xlab}</svg>`;
 }
-function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = true, labels = null, prefix = '', suffix = '' } = {}) {
+function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = true, labels = null, tooltipLabels = null, prefix = '', suffix = '' } = {}) {
   if (!data || data.length < 2) return '';
   const max = Math.max(...data) * 1.12, min = Math.min(...data) * 0.85;
   const span = max - min || 1;
@@ -177,7 +192,11 @@ function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = tr
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity="0.16"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs>
     ${grid}${fill ? `<path d="${area}" fill="url(#${gid})"/>` : ''}
     <path d="${d}" fill="none" stroke="${accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${data.map((v, i) => i === data.length - 1 ? `<circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="3.5" fill="${accent}"/>` : '').join('')}
+    ${data.map((v, i) => {
+      const label = tooltipLabels?.[i] || labels?.[i] || `Point ${i + 1}`;
+      const title = escapeHtml(`${label}: ${formatChartValue(v, { prefix, suffix })}`);
+      return `<g><title>${title}</title><circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="${i === data.length - 1 ? '3.5' : '2.5'}" fill="${accent}" opacity="${i === data.length - 1 ? '1' : '0.55'}"/><circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="10" fill="transparent"/></g>`;
+    }).join('')}
     ${ylab}${xlab}</svg>`;
 }
 function chartDonut(slices, { size = 188, thickness = 26 } = {}) {
@@ -2729,6 +2748,7 @@ function AppInner() {
   // chart inputs from the real daily series + summary
   const periodRequestCount = summary.total ?? requests.length;
   const dayLabels = series.map((d) => d.day.slice(5));
+  const dayTooltipLabels = series.map((d) => d.day);
   const recvSeries = series.map((d) => d.received);
   const latSeries = series.map((d) => d.avg_latency);
   const paValueReceived = Number(summary.intake_value ?? summary.current_snapshot_value ?? 0);
@@ -2874,7 +2894,7 @@ function AppInner() {
                     tip="Inbound webhook count over the period. Includes parse-failed deliveries that never made it to a PA."
                     desc="Inbound pre-auth volume across the period"
                     big={`${periodRequestCount} <small>this period</small>`}
-                    chartHtml={chartBars(recvSeries, { accent: 'var(--ink-3)', labels: dayLabels })}
+                    chartHtml={chartBars(recvSeries, { accent: 'var(--ink-3)', labels: dayLabels, tooltipLabels: dayTooltipLabels, suffix: ' requests' })}
                     moveH="Inbound volume"
                     moveP={`${periodRequestCount} requests this period. ${summary.processing ?? 0} processing and ${summary.pending ?? 0} pending a first decision.`}
                   />
@@ -2897,7 +2917,7 @@ function AppInner() {
                     tip="Average seconds from when a PA was received to when the agent finished deciding. Excludes still-processing PAs."
                     desc="Time from received → decided"
                     big={`${avgLatTxt}<small>s avg</small>`}
-                    chartHtml={chartLine(latSeries, { accent: 'var(--indigo)', suffix: 's' })}
+                    chartHtml={chartLine(latSeries, { accent: 'var(--indigo)', labels: dayLabels, tooltipLabels: dayTooltipLabels, suffix: 's' })}
                     moveH="Seconds, not minutes"
                     moveP={`Average decision latency is ${avgLatTxt}s versus a ~30-minute manual baseline.`}
                   />
