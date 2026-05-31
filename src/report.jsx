@@ -342,6 +342,12 @@ function RItems({ p }) {
     <div className="rpt-block">
       <div className="sec-h">Requested items <span className="n">{p.items.length}</span></div>
       <table className="items">
+        <colgroup>
+          <col className="col-name" />
+          <col className="col-qty" />
+          <col className="col-amt" />
+          <col className="col-cov" />
+        </colgroup>
         <thead>
           <tr>
             <th>Item</th>

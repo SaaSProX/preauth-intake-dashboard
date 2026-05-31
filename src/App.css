@@ -570,17 +570,45 @@ img, svg { display: block; }
 .report-sheet-portal .timeline-block { break-inside: auto; }
 
 /* items table */
-.report-sheet-portal table.items { width: 100%; border-collapse: collapse; border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+.report-sheet-portal table.items {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  /* `overflow: hidden` hides the rounded corners cleanly on screen but
+     would clip a long table at the page break in print. Switched to
+     keeping a clean border on every cell instead so the cells never
+     visually merge across page boundaries. */
+  table-layout: fixed;
+}
+.report-sheet-portal table.items col.col-name { width: auto; }
+.report-sheet-portal table.items col.col-qty  { width: 70px; }
+.report-sheet-portal table.items col.col-amt  { width: 130px; }
+.report-sheet-portal table.items col.col-cov  { width: 110px; }
 .report-sheet-portal table.items thead th {
   font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3);
   text-align: left; padding: 10px 16px; background: var(--bg-2); border-bottom: 1px solid var(--line);
+  vertical-align: middle;
 }
 .report-sheet-portal table.items th.qty, .report-sheet-portal table.items td.qty,
 .report-sheet-portal table.items th.amt, .report-sheet-portal table.items td.amt { text-align: right; }
-.report-sheet-portal table.items th.cov, .report-sheet-portal table.items td.cov { text-align: right; width: 110px; }
-.report-sheet-portal table.items tbody td { padding: 11px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+.report-sheet-portal table.items th.cov, .report-sheet-portal table.items td.cov { text-align: right; }
+/* Every td gets a top + bottom border. If a row falls across a page
+   break, the border-top on the next page makes it visually obvious
+   without depending on the previous page's border-bottom rendering. */
+.report-sheet-portal table.items tbody td {
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px; color: var(--ink);
+  vertical-align: middle;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.report-sheet-portal table.items tbody tr:first-child td { border-top: none; }
 .report-sheet-portal table.items tbody tr:last-child td { border-bottom: none; }
-.report-sheet-portal table.items td.qty, .report-sheet-portal table.items td.amt { font-family: var(--mono); font-size: 12.5px; }
+.report-sheet-portal table.items td.qty, .report-sheet-portal table.items td.amt { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+.report-sheet-portal table.items td.cov { white-space: nowrap; }
 .report-sheet-portal .cov-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; }
 .report-sheet-portal .cov-tag.ok { color: var(--ok-ink); background: var(--ok-bg); border: 1px solid var(--ok-line); }
 .report-sheet-portal .cov-tag.no { color: var(--bad-ink); background: var(--bad-bg); border: 1px solid var(--bad-line); }
@@ -661,8 +689,46 @@ img, svg { display: block; }
   .report-sheet-portal .run,
   .report-sheet-portal .stage,
   .report-sheet-portal .apx-stage,
-  .report-sheet-portal table.items tr { break-inside: avoid; }
+  .report-sheet-portal table.items tr,
+  .report-sheet-portal .dgrid .cell { break-inside: avoid; }
   .report-sheet-portal .rpt-summary { break-inside: avoid; }
+
+  /* The dgrid (Request details) uses a 1px gap + background trick for its
+     grid lines on screen. That trick relies on overflow:hidden which clips
+     anything past the first printed page. Override to real borders per
+     cell so the grid renders cleanly across page breaks. */
+  .report-sheet-portal .dgrid {
+    background: transparent !important;
+    overflow: visible !important;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    gap: 0 !important;
+  }
+  .report-sheet-portal .dgrid .cell {
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .report-sheet-portal .dgrid .cell:nth-child(2n) { border-right: none; }
+  /* Bottom row (last two cells in a 2-col grid) shouldn't have a bottom
+     border so it meets the outer border cleanly. */
+  .report-sheet-portal .dgrid .cell:nth-last-child(-n+2) { border-bottom: none; }
+
+  /* Repeat <thead> on every page so a wide items table that spans pages
+     still labels its columns. Browsers default to this but some respect
+     only the explicit declaration. */
+  .report-sheet-portal table.items thead { display: table-header-group; }
+  .report-sheet-portal table.items tfoot { display: table-footer-group; }
+  .report-sheet-portal table.items { break-inside: auto; }
+
+  /* The metadata grid (Org / Downloaded by / Downloaded at / Report ID)
+     should stay on one page — it's small and breaking it is ugly. */
+  .report-sheet-portal .rt-meta { break-inside: avoid; }
+
+  /* Don't orphan a section header at the bottom of a page when the table
+     or grid that follows starts on the next page. */
+  .report-sheet-portal .sec-h { break-after: avoid; page-break-after: avoid; }
+  /* Same for the PA bar — it should never be the last thing on a page. */
+  .report-sheet-portal .pa-bar { break-after: avoid; page-break-after: avoid; }
 
   .report-sheet-portal .print-foot {
     display: flex; align-items: center; justify-content: space-between;
