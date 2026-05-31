@@ -732,7 +732,7 @@ function DateRangeFilter({ dateFrom, dateTo, setDateFrom, setDateTo, onChange, l
         className={`date-range-btn ${open ? 'on' : ''}`}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        data-tip="Filter the dashboard by received date. Presets update the date range immediately."
+        data-tip="Filter by received date. Presets update the date range immediately."
         data-tip-pos="below"
       >
         <IconCal />
@@ -1435,7 +1435,30 @@ function KpiTile({ label, val, sub }) {
     </div>
   );
 }
-function HealthView({ data, loading, error, org }) {
+const HEALTH_STATUS_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'accepted', label: 'Accepted' },
+  { value: 'failed', label: 'Any failure' },
+  { value: 'auth_failed', label: 'Auth failed' },
+  { value: 'invalid_payload', label: 'Invalid payload' },
+  { value: 'db_failed', label: 'DB failed' },
+  { value: 'http_failed', label: 'HTTP errors' },
+  { value: 'duplicates', label: 'Duplicates' },
+];
+function HealthView({
+  data,
+  loading,
+  error,
+  org,
+  dateFrom,
+  dateTo,
+  setDateFrom,
+  setDateTo,
+  status,
+  setStatus,
+  limit,
+  setLimit,
+}) {
   const d = (data && data.summary) || {};
   const logs = (data && data.logs) || [];
   const recv = d.total_received || 0;
@@ -1463,12 +1486,28 @@ function HealthView({ data, loading, error, org }) {
     return '—';
   };
   return (
-    <>
+    <div className="loading-host">
+      <LoadingOverlay show={loading && !!data} label="Loading delivery logs" />
       <div className="stub-head"><h1 className="page-title">Integration Health</h1></div>
       <p className="page-sub">Inbound webhook deliveries from <b>{org}</b> · <span className="muted">latest {d.latest_received_at ? timeAgo(d.latest_received_at) : '—'}</span></p>
       <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
         Every webhook the HMO sends — successful or not — is logged here. Use this when {org === 'AMAN' ? 'Aman' : 'your HMO'} says &ldquo;I sent it but you didn&rsquo;t receive it&rdquo;: failed deliveries (bad auth, malformed payload, parse errors) appear here even when they never become a PA. The queue and the Patients page only show requests that landed successfully — this page is the source of truth for the delivery layer.
       </p>
+      <div className="toolbar section-gap" style={{ marginTop: 18 }}>
+        <DateRangeFilter dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} loading={loading} />
+        <div className="search" style={{ width: 190 }}>
+          <span className="muted mono" style={{ fontSize: 12 }}>status</span>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px', width: '100%' }}>
+            {HEALTH_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+        <div className="search" style={{ width: 150 }}>
+          <span className="muted mono" style={{ fontSize: 12 }}>show</span>
+          <select value={String(limit)} onChange={(e) => setLimit(Number(e.target.value))} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px', width: '100%' }}>
+            {[25, 50, 100, 250, 500, 1000].map((n) => <option key={n} value={n}>{n} logs</option>)}
+          </select>
+        </div>
+      </div>
       {error ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
       <div className="kpi-strip section-gap" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
         <KpiTile label="Deliveries received" val={(d.total_received || 0).toLocaleString()} sub={`${d.latest_received_at ? timeAgo(d.latest_received_at) : '—'} latest`} />
@@ -1485,11 +1524,13 @@ function HealthView({ data, loading, error, org }) {
           <p className="move-p">{d.auth_failed || 0} auth failures and {d.payload_invalid || 0} invalid payloads in the window. {d.duplicate_event_attempts || 0} duplicate events and {d.repeated_checkin_attempts || 0} repeated check-ins were de-duplicated.</p>
         </div>
         <div className="metric">
-          <h3>Recent delivery attempts</h3><p className="desc">Including sender, auth result, and DB status</p>
+          <h3>Delivery attempts</h3><p className="desc">Showing {logs.length.toLocaleString()} of {(d.total_received || 0).toLocaleString()} matching logs · sender, auth result, and DB status</p>
           <div className="chart-wrap" style={{ marginTop: 14 }}>
             {logs.length === 0 ? (
               <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '16px 0' }}>{loading ? 'Loading…' : 'No deliveries in range.'}</div>
-            ) : logs.slice(0, 8).map((l) => {
+            ) : (
+              <div style={{ maxHeight: 520, overflow: 'auto', paddingRight: 4 }}>
+                {logs.map((l) => {
               const m = attemptMeta(l);
               return (
                 <div key={l.delivery_id} style={{ display: 'grid', gridTemplateColumns: '96px minmax(0,1.2fr) 74px 78px 58px 44px', gap: 10, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: '11.5px', padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
@@ -1502,10 +1543,12 @@ function HealthView({ data, loading, error, org }) {
                 </div>
               );
             })}
+              </div>
+            )}
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -2285,6 +2328,10 @@ function AppInner() {
   const [health, setHealth] = useState(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState('');
+  const [healthDateFrom, setHealthDateFrom] = useState(() => todayDateInputValue());
+  const [healthDateTo, setHealthDateTo] = useState(() => todayDateInputValue());
+  const [healthStatus, setHealthStatus] = useState('all');
+  const [healthLimit, setHealthLimit] = useState(100);
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
@@ -2416,6 +2463,10 @@ function AppInner() {
     try {
       const qs = new URLSearchParams();
       if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      if (healthDateFrom) qs.set('date_from', healthDateFrom);
+      if (healthDateTo) qs.set('date_to', healthDateTo);
+      if (healthStatus) qs.set('status', healthStatus);
+      qs.set('limit', String(healthLimit));
       const data = await apiRequest('/auth/webhook-delivery-logs?' + qs.toString());
       setHealth(data);
     } catch (err) {
@@ -2770,7 +2821,6 @@ function AppInner() {
 
   useEffect(() => {
     if (!session?.token) return;
-    if (activeNav === 'health') loadHealth();
     if (activeNav === 'audit') loadAudit('');
     if (activeNav === 'team' && !team) loadTeam();
     if (activeNav === 'apikey' && !apikey) loadApiKey();
@@ -2778,6 +2828,12 @@ function AppInner() {
     if (activeNav === 'patients' && !patients) loadPatients();
     // eslint-disable-next-line
   }, [session?.token, activeNav, viewOrgId]);
+
+  useEffect(() => {
+    if (!session?.token || activeNav !== 'health') return;
+    loadHealth();
+    // eslint-disable-next-line
+  }, [session?.token, activeNav, viewOrgId, healthDateFrom, healthDateTo, healthStatus, healthLimit]);
 
   // Refetch the patients list when the active filters change.
   useEffect(() => {
@@ -3136,7 +3192,22 @@ function AppInner() {
           </section>
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
-            {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={viewOrgId?.name || session.org_name} />
+            {activeNav === 'health' ? (
+                <HealthView
+                  data={health}
+                  loading={healthLoading}
+                  error={healthError}
+                  org={viewOrgId?.name || session.org_name}
+                  dateFrom={healthDateFrom}
+                  dateTo={healthDateTo}
+                  setDateFrom={setHealthDateFrom}
+                  setDateTo={setHealthDateTo}
+                  status={healthStatus}
+                  setStatus={setHealthStatus}
+                  limit={healthLimit}
+                  setLimit={setHealthLimit}
+                />
+              )
               : activeNav === 'patients' ? (
                   selectedPatientId
                     ? <PatientDetail
