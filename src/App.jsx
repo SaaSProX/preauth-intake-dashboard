@@ -171,7 +171,7 @@ function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)'
   }
   let xlab = '';
   if (labels) labels.forEach((l, i) => {
-    const idx = Math.round((data.length - 1) * (i / (labels.length - 1)));
+    const idx = labels.length <= 1 ? 0 : Math.round((data.length - 1) * (i / (labels.length - 1)));
     const x = pad.l + idx * bw + bw / 2;
     xlab += `<text x="${x.toFixed(1)}" y="${h - 5}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${l}</text>`;
   });
@@ -197,7 +197,7 @@ function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = tr
   }
   let xlab = '';
   if (labels) labels.forEach((l, i) => {
-    const idx = Math.round((data.length - 1) * (i / (labels.length - 1)));
+    const idx = labels.length <= 1 ? 0 : Math.round((data.length - 1) * (i / (labels.length - 1)));
     xlab += `<text x="${xs(idx).toFixed(1)}" y="${h - 5}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${l}</text>`;
   });
   const gid = 'g' + Math.random().toString(36).slice(2, 7);
@@ -2885,7 +2885,8 @@ function AppInner() {
             </div>
 
             {activeTab === 'dashboard' ? (
-              <div id="tab-dashboard">
+              <div id="tab-dashboard" className="loading-host dashboard-loading-host">
+                <LoadingOverlay show={loading && !!dashboard} label="Updating dashboard" />
                 <div className="section-gap" style={{ marginTop: 24 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
                     <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Queue filters</h2>

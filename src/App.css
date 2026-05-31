@@ -390,6 +390,8 @@ img, svg { display: block; }
    ============================================================ */
 .queue { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; background: var(--bg); }
 .loading-host { position: relative; min-height: 180px; }
+.dashboard-loading-host { min-height: 520px; }
+.dashboard-loading-host > .loading-overlay { z-index: 25; border-radius: var(--r-lg); }
 .loading-overlay {
   position: absolute;
   inset: 0;
