@@ -113,13 +113,13 @@ function fmtClock(value) {
 }
 
 const STATUS_META = {
-  approve:    { label: 'Approve',    cls: 'approve',    help: 'Agent decided to authorize the request.' },
-  deny:       { label: 'Deny',       cls: 'deny',       help: 'Agent refused the request — usually exclusion, limit exceeded, or eligibility issue.' },
-  escalate:   { label: 'Escalate',   cls: 'escalate',   help: 'Agent flagged for human review — high cost, ambiguous, or missing data.' },
-  pending:    { label: 'Pending',    cls: 'pending',    help: 'Received but not yet picked up. Awaiting an agent run.' },
+  approve: { label: 'Approve', cls: 'approve', help: 'Agent decided to authorize the request.' },
+  deny: { label: 'Deny', cls: 'deny', help: 'Agent refused the request — usually exclusion, limit exceeded, or eligibility issue.' },
+  escalate: { label: 'Escalate', cls: 'escalate', help: 'Agent flagged for human review — high cost, ambiguous, or missing data.' },
+  pending: { label: 'Pending', cls: 'pending', help: 'Received but not yet picked up. Awaiting an agent run.' },
   processing: { label: 'Processing', cls: 'processing', help: 'Pipeline is mid-run. Should resolve within seconds.' },
-  received:   { label: 'Received',   cls: 'received',   help: 'Live HMO payload captured. Decisioning paused pending mapping validation.' },
-  error:      { label: 'Error',      cls: 'error',      help: 'Pipeline crashed before deciding. See the request drawer for the error message.' },
+  received: { label: 'Received', cls: 'received', help: 'Live HMO payload captured. Decisioning paused pending mapping validation.' },
+  error: { label: 'Error', cls: 'error', help: 'Pipeline crashed before deciding. See the request drawer for the error message.' },
 };
 function normalizeStatus(v) {
   const s = String(v || 'pending').toLowerCase();
@@ -227,10 +227,10 @@ function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = tr
     ${grid}${fill ? `<path d="${area}" fill="url(#${gid})"/>` : ''}
     <path d="${d}" fill="none" stroke="${accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     ${data.map((v, i) => {
-      const label = tooltipLabels?.[i] || labels?.[i] || `Point ${i + 1}`;
-      const hitW = i === 0 || i === data.length - 1 ? Math.max(20, iw / (data.length - 1) / 2) : Math.max(24, iw / (data.length - 1));
-      return `<g class="chart-hit"><rect x="${(xs(i) - hitW / 2).toFixed(1)}" y="${pad.t}" width="${hitW.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent" pointer-events="all"/><circle class="chart-point" cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="${i === data.length - 1 ? '3.5' : '2.5'}" fill="${accent}" opacity="${i === data.length - 1 ? '1' : '0.55'}"/>${chartTooltip(label, v, xs(i), ys(v), { w, padRight: pad.r, prefix, suffix })}</g>`;
-    }).join('')}
+    const label = tooltipLabels?.[i] || labels?.[i] || `Point ${i + 1}`;
+    const hitW = i === 0 || i === data.length - 1 ? Math.max(20, iw / (data.length - 1) / 2) : Math.max(24, iw / (data.length - 1));
+    return `<g class="chart-hit"><rect x="${(xs(i) - hitW / 2).toFixed(1)}" y="${pad.t}" width="${hitW.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent" pointer-events="all"/><circle class="chart-point" cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="${i === data.length - 1 ? '3.5' : '2.5'}" fill="${accent}" opacity="${i === data.length - 1 ? '1' : '0.55'}"/>${chartTooltip(label, v, xs(i), ys(v), { w, padRight: pad.r, prefix, suffix })}</g>`;
+  }).join('')}
     ${ylab}${xlab}</svg>`;
 }
 function chartDonut(slices, { size = 188, thickness = 26 } = {}) {
@@ -348,9 +348,9 @@ function itemsFromPayload(raw) {
   const p = asObj(raw);
   const list = asArr(p.pa_items).length ? p.pa_items
     : asArr(p.submission?.items_added).length ? p.submission.items_added
-    : asArr(p.requested_items).length ? p.requested_items
-    : asArr(p.items).length ? p.items
-    : asArr(p.line_items);
+      : asArr(p.requested_items).length ? p.requested_items
+        : asArr(p.items).length ? p.items
+          : asArr(p.line_items);
   return asArr(list).map((it) => {
     const itm = asObj(it);
     return {
@@ -546,7 +546,7 @@ function PlanTag({ plan }) {
 // Toast plumbing — a tiny context so anywhere in the tree can fire a short
 // confirmation message in the bottom-right corner. No animation lib, just a
 // styled div that mounts for ~2.4s.
-const ToastContext = createContext({ show: () => {} });
+const ToastContext = createContext({ show: () => { } });
 function useToast() { return useContext(ToastContext); }
 
 function ToastHost({ children }) {
@@ -1547,18 +1547,18 @@ function HealthView({
             ) : (
               <div style={{ maxHeight: 520, overflow: 'auto', paddingRight: 4 }}>
                 {logs.map((l) => {
-              const m = attemptMeta(l);
-              return (
-                <div key={l.delivery_id} style={{ display: 'grid', gridTemplateColumns: '96px minmax(0,1.2fr) 74px 78px 58px 44px', gap: 10, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: '11.5px', padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
-                  <span title={l.checkin_id || l.delivery_id}>{shortId(l)}</span>
-                  <span className="muted" title={senderName(l)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{senderName(l)}</span>
-                  <span className="muted">{l.created_at ? timeAgo(l.created_at) : '—'}</span>
-                  <span style={{ color: m.color }}>{m.label}</span>
-                  <span className="muted">{dbStatusLabel(l.db_insert_status)}</span>
-                  <b>{l.http_status_returned ?? '—'}</b>
-                </div>
-              );
-            })}
+                  const m = attemptMeta(l);
+                  return (
+                    <div key={l.delivery_id} style={{ display: 'grid', gridTemplateColumns: '96px minmax(0,1.2fr) 74px 78px 58px 44px', gap: 10, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: '11.5px', padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
+                      <span title={l.checkin_id || l.delivery_id}>{shortId(l)}</span>
+                      <span className="muted" title={senderName(l)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{senderName(l)}</span>
+                      <span className="muted">{l.created_at ? timeAgo(l.created_at) : '—'}</span>
+                      <span style={{ color: m.color }}>{m.label}</span>
+                      <span className="muted">{dbStatusLabel(l.db_insert_status)}</span>
+                      <b>{l.http_status_returned ?? '—'}</b>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1572,13 +1572,13 @@ function HealthView({
    Patients — index + detail (wired to /auth/patients + /auth/patient-history)
    ============================================================ */
 const OUTCOME_DOT = {
-  approve:    'var(--ok)',
-  deny:       'var(--bad)',
-  escalate:   'var(--warn)',
+  approve: 'var(--ok)',
+  deny: 'var(--bad)',
+  escalate: 'var(--warn)',
   processing: 'var(--indigo)',
-  pending:    'var(--slate)',
-  received:   'var(--recv)',
-  error:      'var(--bad)',
+  pending: 'var(--slate)',
+  received: 'var(--recv)',
+  error: 'var(--bad)',
 };
 const OUTCOME_LABEL = {
   approve: 'approve', deny: 'deny', escalate: 'escalate',
@@ -1726,7 +1726,7 @@ function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, 
   // full /patient-history payload (more accurate than the index aggregate).
   const counts = requests.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
   const totalRequested = requests.reduce((s, r) => s + (Number(r.requested_amount) || 0), 0);
-  const totalApproved  = requests.reduce((s, r) => s + (r.status === 'approve' ? Number(r.amount_approved || 0) : 0), 0);
+  const totalApproved = requests.reduce((s, r) => s + (r.status === 'approve' ? Number(r.amount_approved || 0) : 0), 0);
   const header = requests[0] || {};
   return (
     <>
@@ -1813,7 +1813,7 @@ function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, 
               </button>
               {isOpen ? (
                 <div style={{ padding: '14px 18px 20px', borderTop: '1px solid var(--line)', background: 'var(--bg-2)' }}>
-                  <DetailView r={r} siblings={[]} onSelectSibling={() => {}} paEvents={[]} paEventsLoading={false} paEventsError="" />
+                  <DetailView r={r} siblings={[]} onSelectSibling={() => { }} paEvents={[]} paEventsLoading={false} paEventsError="" />
                 </div>
               ) : null}
             </div>
@@ -2190,7 +2190,7 @@ function Login({ email, setEmail, password, setPassword, onSubmit, error, loadin
         </label>
         {error ? <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--bad-ink)', background: 'var(--bad-bg)', border: '1px solid var(--bad-line)', borderRadius: 8, padding: '8px 12px' }}>{error}</div> : null}
         <button className="btn indigo" type="submit" disabled={loading} style={{ justifyContent: 'center' }}>{loading ? 'Signing in…' : 'Sign in'}</button>
-        <span className="eyebrow" style={{ textAlign: 'center' }}>Backend: {API_BASE_URL}</span>
+        {/* <span className="eyebrow" style={{ textAlign: 'center' }}>Backend: {API_BASE_URL}</span> */}
       </form>
     </main>
   );
@@ -3289,41 +3289,41 @@ function AppInner() {
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
             {activeNav === 'health' ? (
-                <HealthView
-                  data={health}
-                  loading={healthLoading}
-                  error={healthError}
-                  org={viewOrgId?.name || session.org_name}
-                  dateFrom={healthDateFrom}
-                  dateTo={healthDateTo}
-                  setDateFrom={setHealthDateFrom}
-                  setDateTo={setHealthDateTo}
-                  status={healthStatus}
-                  setStatus={setHealthStatus}
-                  limit={healthLimit}
-                  setLimit={setHealthLimit}
-                />
-              )
+              <HealthView
+                data={health}
+                loading={healthLoading}
+                error={healthError}
+                org={viewOrgId?.name || session.org_name}
+                dateFrom={healthDateFrom}
+                dateTo={healthDateTo}
+                setDateFrom={setHealthDateFrom}
+                setDateTo={setHealthDateTo}
+                status={healthStatus}
+                setStatus={setHealthStatus}
+                limit={healthLimit}
+                setLimit={setHealthLimit}
+              />
+            )
               : activeNav === 'patients' ? (
-                  selectedPatientId
-                    ? <PatientDetail
-                        patient={patientDetail}
-                        loading={patientDetailLoading}
-                        error={patientDetailError}
-                        openedIds={openedPaIds}
-                        toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
-                        onBack={() => navigateTo({ patient_id: '' })}
-                        onDownloadPdf={downloadPatientPdf}
-                        session={session}
-                        orgName={viewOrgId?.name || session.org_name}
-                      />
-                    : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} onBack={() => navigateTo({ nav: 'intake', patient_id: '' })} />
-                )
-              : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
-              : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
-              : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
-              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isPlatformAdmin={isPlatformAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
-              : <StubView id={activeNav} session={session} />}
+                selectedPatientId
+                  ? <PatientDetail
+                    patient={patientDetail}
+                    loading={patientDetailLoading}
+                    error={patientDetailError}
+                    openedIds={openedPaIds}
+                    toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+                    onBack={() => navigateTo({ patient_id: '' })}
+                    onDownloadPdf={downloadPatientPdf}
+                    session={session}
+                    orgName={viewOrgId?.name || session.org_name}
+                  />
+                  : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} onBack={() => navigateTo({ nav: 'intake', patient_id: '' })} />
+              )
+                : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
+                  : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
+                    : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
+                      : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isPlatformAdmin={isPlatformAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
+                        : <StubView id={activeNav} session={session} />}
           </section>
         )}
       </main>
