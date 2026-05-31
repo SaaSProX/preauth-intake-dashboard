@@ -1,323 +1,1862 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Activity,
-  Banknote,
-  CalendarDays,
-  ChevronRight,
-  ClipboardList,
-  Clock3,
-  FileJson,
-  Filter,
-  Headphones,
-  Inbox,
-  LogOut,
-  MessageSquare,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  UserCheck,
-} from 'lucide-react';
+import React, { useEffect, useMemo, useState, createContext, useContext, useCallback, useRef } from 'react';
+import { PatientReportSheet } from './report.jsx';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
 
 function normalizeApiBaseUrl(value) {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return 'http://localhost:8000';
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withScheme.replace(/\/+$/, '');
+  const t = String(value || '').trim();
+  if (!t) return 'http://localhost:8000';
+  const w = /^https?:\/\//i.test(t) ? t : `http://${t}`;
+  return w.replace(/\/+$/, '');
 }
 
+/* ============================================================
+   Formatting
+   ============================================================ */
+function fmtNGN(n) {
+  if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
+  n = Number(n);
+  if (n >= 1_000_000) return '₦' + (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 2) + 'm';
+  if (n >= 1_000) return '₦' + (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
+  return '₦' + n.toLocaleString();
+}
+function fmtNGNfull(n) {
+  return (n == null || n === '' || Number.isNaN(Number(n))) ? '—' : '₦' + Number(n).toLocaleString('en-NG');
+}
+function fmtSecs(s) {
+  if (s == null || s === '') return '—';
+  s = Number(s);
+  if (s < 60) return s.toFixed(1) + 's';
+  return (s / 60).toFixed(1) + 'm';
+}
 function parseApiDate(value) {
-  if (!value || value instanceof Date) return value;
+  if (!value) return null;
   const text = String(value);
   return /(?:z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`;
 }
-
-function formatDate(value) {
-  if (!value) return 'Not processed';
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(parseApiDate(value)));
+function timeAgo(value) {
+  if (!value) return '—';
+  const d = new Date(parseApiDate(value));
+  if (Number.isNaN(d.getTime())) return '—';
+  const min = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+  if (min < 1) return 'just now';
+  if (min < 60) return min + 'm ago';
+  const h = Math.floor(min / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
 }
-
-function formatDuration(seconds) {
-  if (seconds === null || seconds === undefined) return 'Pending';
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return `${minutes}m ${remaining}s`;
-}
-
-function formatMoney(value) {
-  if (value === null || value === undefined || value === '') return 'Not set';
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) return String(value);
-  return new Intl.NumberFormat('en-NG', {
-    style: 'currency',
-    currency: 'NGN',
-    maximumFractionDigits: 0,
-  }).format(numeric);
-}
-
-function toNumber(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function asArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function localDateKey(value) {
-  const date = value instanceof Date ? value : new Date(parseApiDate(value));
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function isToday(value) {
-  return value && localDateKey(value) === localDateKey(new Date());
-}
-
-function itemRequestedCost(item) {
-  if (!item || typeof item !== 'object') return 0;
-
-  const directAmount =
-    toNumber(item.requested_cost) ??
-    toNumber(item.estimated_cost) ??
-    toNumber(item.cost) ??
-    toNumber(item.amount);
-
-  if (directAmount !== null) return directAmount;
-
-  const unitCost = toNumber(item.unit_cost);
-  const quantity = toNumber(item.quantity) ?? 1;
-  return unitCost !== null ? unitCost * quantity : 0;
-}
-
-function requestItemsFromPayload(payload) {
-  if (!payload || typeof payload !== 'object') return [];
-
-  const paItems = asArray(payload.pa_items);
-  if (paItems.length) return paItems;
-
-  const submittedItems = asArray(payload.submission?.items_added);
-  if (submittedItems.length) return submittedItems;
-
-  const requestedItems = asArray(payload.requested_items);
-  if (requestedItems.length) return requestedItems;
-
-  const items = asArray(payload.items);
-  if (items.length) return items;
-
-  return asArray(payload.line_items);
-}
-
-function requestedAmountFromRequest(request) {
-  const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
-  const items = requestItemsFromPayload(payload);
-  const itemTotal = items.reduce((sum, item) => sum + itemRequestedCost(item), 0);
-
-  return (
-    itemTotal ||
-    toNumber(payload.total_requested_cost) ||
-    toNumber(request?.estimated_cost) ||
-    0
-  );
-}
-
-function providerLabel(value) {
+function fmtClock(value) {
   if (!value) return '';
-  if (typeof value === 'object') {
-    return value.name || value.role || value.email || JSON.stringify(value);
+  const d = new Date(parseApiDate(value));
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+const STATUS_META = {
+  approve:    { label: 'Approve',    cls: 'approve',    help: 'Agent decided to authorize the request.' },
+  deny:       { label: 'Deny',       cls: 'deny',       help: 'Agent refused the request — usually exclusion, limit exceeded, or eligibility issue.' },
+  escalate:   { label: 'Escalate',   cls: 'escalate',   help: 'Agent flagged for human review — high cost, ambiguous, or missing data.' },
+  pending:    { label: 'Pending',    cls: 'pending',    help: 'Received but not yet picked up. Awaiting an agent run.' },
+  processing: { label: 'Processing', cls: 'processing', help: 'Pipeline is mid-run. Should resolve within seconds.' },
+  received:   { label: 'Received',   cls: 'received',   help: 'Live HMO payload captured. Decisioning paused pending mapping validation.' },
+  error:      { label: 'Error',      cls: 'error',      help: 'Pipeline crashed before deciding. See the request drawer for the error message.' },
+};
+function normalizeStatus(v) {
+  const s = String(v || 'pending').toLowerCase();
+  if (s === 'approved') return 'approve';
+  if (['denied', 'reject', 'rejected'].includes(s)) return 'deny';
+  if (s === 'escalated') return 'escalate';
+  return STATUS_META[s] ? s : 'pending';
+}
+function planClass(p) {
+  const s = (p || '').toLowerCase();
+  if (s.includes('platinum')) return 'platinum';
+  if (s.includes('gold')) return 'gold';
+  if (s.includes('silver')) return 'silver';
+  if (s.includes('bronze')) return 'bronze';
+  return '';
+}
+
+/* ============================================================
+   SVG chart builders (ported from the prototype, return HTML strings)
+   ============================================================ */
+function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)', labels = null } = {}) {
+  if (!data || !data.length) return '';
+  const m = max || Math.max(...data) * 1.1 || 1;
+  const pad = { l: 38, r: 8, t: 8, b: 22 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const bw = iw / data.length;
+  const barW = Math.max(2, bw * 0.4);
+  let bars = '';
+  data.forEach((v, i) => {
+    const bh = (v / m) * ih;
+    const x = pad.l + i * bw + (bw - barW) / 2;
+    const y = pad.t + ih - bh;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${accent}"/>`;
+  });
+  let grid = '', ylab = '';
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const val = (m / ticks) * t;
+    const y = pad.t + ih - (val / m) * ih;
+    grid += `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w - pad.r}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`;
+    ylab += `<text x="${pad.l - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${val >= 1000 ? (val / 1000) + 'k' : Math.round(val)}</text>`;
   }
-  return String(value);
+  let xlab = '';
+  if (labels) labels.forEach((l, i) => {
+    const idx = Math.round((data.length - 1) * (i / (labels.length - 1)));
+    const x = pad.l + idx * bw + bw / 2;
+    xlab += `<text x="${x.toFixed(1)}" y="${h - 5}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${l}</text>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">${grid}${bars}${ylab}${xlab}</svg>`;
+}
+function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = true, labels = null, prefix = '', suffix = '' } = {}) {
+  if (!data || data.length < 2) return '';
+  const max = Math.max(...data) * 1.12, min = Math.min(...data) * 0.85;
+  const span = max - min || 1;
+  const pad = { l: 44, r: 10, t: 10, b: 22 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const xs = (i) => pad.l + (iw * i) / (data.length - 1);
+  const ys = (v) => pad.t + ih - ((v - min) / span) * ih;
+  let d = '';
+  data.forEach((v, i) => { d += (i ? 'L' : 'M') + xs(i).toFixed(1) + ' ' + ys(v).toFixed(1) + ' '; });
+  const area = d + `L${xs(data.length - 1).toFixed(1)} ${(pad.t + ih).toFixed(1)} L${xs(0).toFixed(1)} ${(pad.t + ih).toFixed(1)} Z`;
+  let grid = '', ylab = '';
+  for (let t = 0; t <= 4; t++) {
+    const val = min + (span / 4) * t;
+    const y = ys(val);
+    grid += `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w - pad.r}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 3"/>`;
+    ylab += `<text x="${pad.l - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${prefix}${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : Math.round(val)}${suffix}</text>`;
+  }
+  let xlab = '';
+  if (labels) labels.forEach((l, i) => {
+    const idx = Math.round((data.length - 1) * (i / (labels.length - 1)));
+    xlab += `<text x="${xs(idx).toFixed(1)}" y="${h - 5}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-4)">${l}</text>`;
+  });
+  const gid = 'g' + Math.random().toString(36).slice(2, 7);
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity="0.16"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs>
+    ${grid}${fill ? `<path d="${area}" fill="url(#${gid})"/>` : ''}
+    <path d="${d}" fill="none" stroke="${accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${data.map((v, i) => i === data.length - 1 ? `<circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="3.5" fill="${accent}"/>` : '').join('')}
+    ${ylab}${xlab}</svg>`;
+}
+function chartDonut(slices, { size = 188, thickness = 26 } = {}) {
+  const total = slices.reduce((a, s) => a + s.v, 0) || 1;
+  const r = (size - thickness) / 2, cx = size / 2, cy = size / 2, C = 2 * Math.PI * r;
+  let off = 0, segs = '';
+  slices.forEach((s) => {
+    const len = (s.v / total) * C;
+    segs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.c}" stroke-width="${thickness}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    off += len;
+  });
+  const top = slices.reduce((a, s) => (s.v > a.v ? s : a), slices[0] || { v: 0, k: '' });
+  return `<div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="flex:none">${segs}
+      <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="var(--mono)" font-size="26" font-weight="600" fill="var(--ink)">${Math.round((top.v / total) * 100)}%</text>
+      <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">${(top.k || '').toUpperCase()}</text>
+    </svg>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${slices.map((s) => `<div style="display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12.5px"><span style="width:9px;height:9px;border-radius:2px;background:${s.c}"></span><span style="color:var(--ink-2);min-width:78px">${s.k}</span><b style="color:var(--ink)">${s.v.toLocaleString()}</b></div>`).join('')}
+    </div></div>`;
 }
 
-function enrichRequest(request) {
-  const payload = request?.raw_payload && typeof request.raw_payload === 'object' ? request.raw_payload : {};
-  const encounter = payload.encounter || {};
-  const policy = payload.policy || {};
-  const enrollee = payload.enrollee || {};
-  const items = requestItemsFromPayload(payload);
-  const firstItem = items[0] || {};
-  const patientName = [enrollee.first_name, enrollee.surname].filter(Boolean).join(' ');
-  const requestedAmount = requestedAmountFromRequest(request);
-  const itemLabel =
-    items.length > 1
-      ? `${items.length} requested items`
-      : firstItem.item_name || firstItem.description || request.item_description;
-
-  return {
-    ...request,
-    display_request_id: encounter.checkin_id || request.request_id,
-    patient_id: enrollee.insurance_no || request.patient_id,
-    patient_name: patientName,
-    plan: policy.plan_name || policy.insurance_package || request.plan,
-    item_description: itemLabel,
-    estimated_cost: requestedAmount || request.estimated_cost,
-    requested_amount: requestedAmount,
-    line_item_count: items.length,
-    facility: encounter.facility_name || request.facility,
-    requesting_provider: providerLabel(request.requesting_provider) || providerLabel(payload.submission?.submitted_by),
-  };
+function chartHBars(data, { accent = 'var(--indigo)' } = {}) {
+  const max = Math.max(...data.map((d) => d.v)) || 1;
+  return `<div style="display:flex;flex-direction:column;gap:10px">${data.map((d) => `<div style="display:grid;grid-template-columns:64px 1fr 48px;align-items:center;gap:10px;font-family:var(--mono);font-size:12px"><span style="color:var(--ink-2)">${d.k}</span><span style="height:9px;background:var(--bg-3);border-radius:5px;overflow:hidden"><span style="display:block;height:100%;width:${(d.v / max * 100).toFixed(1)}%;background:${accent};border-radius:5px"></span></span><b style="text-align:right;color:var(--ink)">${d.v}</b></div>`).join('')}</div>`;
 }
 
-function normalizeStatus(value) {
-  return String(value || 'pending').toLowerCase();
-}
+/* ============================================================
+   Map the real /auth/preauth-dashboard request -> view model
+   ============================================================ */
+function asObj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+function asArr(v) { return Array.isArray(v) ? v : []; }
 
-function statusClass(value) {
-  const status = normalizeStatus(value);
-  if (['approve', 'approved', 'pass'].includes(status)) return 'status success';
-  if (['deny', 'denied', 'reject', 'rejected', 'fail', 'error'].includes(status)) return 'status danger';
-  if (['escalate', 'escalated'].includes(status)) return 'status warning';
-  if (status === 'processing') return 'status info';
-  return 'status neutral';
+// ── PA event-timeline helpers (ported from origin/main / kalycoding) ──────
+// His /auth/preauth-events endpoint returns one row per intake webhook for
+// a single check-in. These helpers normalize the fields his payloads carry.
+function _evtNum(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+function eventValue(event) { return _evtNum(event?.items_added_total) ?? _evtNum(event?.total_requested_cost) ?? 0; }
+function eventItemCount(event) { return _evtNum(event?.items_added_count) ?? _evtNum(event?.item_count) ?? 0; }
+function closeNumberMatch(a, b) {
+  const x = _evtNum(a); const y = _evtNum(b);
+  return x !== null && y !== null && Math.abs(x - y) < 0.01;
 }
-
-function prettyStatus(value) {
-  const status = normalizeStatus(value);
-  if (status === 'approve') return 'Approved';
-  if (status === 'deny') return 'Denied';
-  if (status === 'escalate') return 'Escalated';
-  return status.charAt(0).toUpperCase() + status.slice(1);
+function itemRequestedCost(it) {
+  const direct = _evtNum(it?.requested_cost) ?? _evtNum(it?.estimated_cost) ?? _evtNum(it?.cost) ?? _evtNum(it?.amount);
+  if (direct != null && direct) return direct;
+  const u = _evtNum(it?.unit_cost); const q = _evtNum(it?.quantity) || 1;
+  return u != null ? u * q : 0;
 }
-
-function isLiveAmanPayload(request) {
-  return request?.raw_payload?.event_type === 'pa.submitted';
-}
-
-function requestStatusLabel(request) {
-  return isLiveAmanPayload(request) ? 'Received' : prettyStatus(request?.status);
-}
-
-function requestStatusClass(request) {
-  return isLiveAmanPayload(request) ? 'status info' : statusClass(request?.status);
-}
-
-function eventValue(event) {
-  return toNumber(event?.items_added_total) ?? toNumber(event?.total_requested_cost) ?? 0;
-}
-
-function eventItemCount(event) {
-  return toNumber(event?.items_added_count) ?? toNumber(event?.item_count) ?? 0;
-}
-
-function closeNumberMatch(left, right) {
-  const leftNumber = toNumber(left);
-  const rightNumber = toNumber(right);
-  return leftNumber !== null && rightNumber !== null && Math.abs(leftNumber - rightNumber) < 0.01;
-}
-
 function itemsAddedFromEvent(event) {
-  const payload = event?.raw_payload && typeof event.raw_payload === 'object' ? event.raw_payload : {};
-  const addedItems = asArray(payload.submission?.items_added);
-  const paItems = asArray(payload.pa_items).length
-    ? asArray(payload.pa_items)
-    : asArray(event?.extracted_fields?.items);
-  const usedItemKeys = new Set();
-
-  if (addedItems.length) {
-    return addedItems.map((item, index) => {
-      const id = item?.id;
-      const candidates = paItems
-        .map((paItem, paIndex) => ({ paItem, paIndex }))
-        .filter(({ paItem, paIndex }) => {
-          const key = paItem?.claim_item_id || `${paItem?.facility_tariff_item_id || 'item'}-${paIndex}`;
-          if (usedItemKeys.has(key)) return false;
-          const quantityMatches = closeNumberMatch(paItem?.quantity, item?.quantity);
-          const amountMatches = closeNumberMatch(paItem?.requested_cost, item?.requested_cost);
+  const payload = asObj(event?.raw_payload);
+  const added = asArr(payload?.submission?.items_added);
+  const pa = asArr(payload?.pa_items).length ? asArr(payload?.pa_items) : asArr(asObj(event?.extracted_fields)?.items);
+  const used = new Set();
+  if (added.length) {
+    return added.map((it, idx) => {
+      const id = it?.id;
+      const candidate = pa
+        .map((p, pi) => ({ p, pi }))
+        .filter(({ p, pi }) => {
+          const key = p?.claim_item_id || `${p?.facility_tariff_item_id || 'item'}-${pi}`;
+          if (used.has(key)) return false;
+          const qm = closeNumberMatch(p?.quantity, it?.quantity);
+          const am = closeNumberMatch(p?.requested_cost, it?.requested_cost);
           return (
-            String(paItem?.facility_tariff_item_id || '') === String(id || '') ||
-            String(paItem?.claim_item_id || '') === String(id || '') ||
-            (quantityMatches && amountMatches) ||
-            (paIndex === index && addedItems.length === paItems.length)
+            String(p?.facility_tariff_item_id || '') === String(id || '') ||
+            String(p?.claim_item_id || '') === String(id || '') ||
+            (qm && am) ||
+            (pi === idx && added.length === pa.length)
           );
         })
-        .sort((left, right) => {
-          const score = ({ paItem, paIndex }) => {
-            const idMatches =
-              String(paItem?.facility_tariff_item_id || '') === String(id || '') ||
-              String(paItem?.claim_item_id || '') === String(id || '');
-            const quantityMatches = closeNumberMatch(paItem?.quantity, item?.quantity);
-            const amountMatches = closeNumberMatch(paItem?.requested_cost, item?.requested_cost);
-            const orderMatches = paIndex === index && addedItems.length === paItems.length;
-            const isPending = normalizeStatus(paItem?.status) === 'pending';
-            if (idMatches && quantityMatches && amountMatches && isPending) return 0;
-            if (idMatches && quantityMatches && amountMatches) return 1;
-            if (quantityMatches && amountMatches && orderMatches && isPending) return 2;
-            if (quantityMatches && amountMatches && orderMatches) return 3;
-            if (quantityMatches && amountMatches && isPending) return 4;
-            if (quantityMatches && amountMatches) return 5;
-            if (orderMatches && isPending) return 6;
-            if (orderMatches) return 7;
+        .sort((l, r) => {
+          const score = ({ p, pi }) => {
+            const idMatch = String(p?.facility_tariff_item_id || '') === String(id || '') || String(p?.claim_item_id || '') === String(id || '');
+            const qm = closeNumberMatch(p?.quantity, it?.quantity);
+            const am = closeNumberMatch(p?.requested_cost, it?.requested_cost);
+            const om = pi === idx && added.length === pa.length;
+            const pen = String(p?.status || '').toLowerCase() === 'pending';
+            if (idMatch && qm && am && pen) return 0;
+            if (idMatch && qm && am) return 1;
+            if (qm && am && om && pen) return 2;
+            if (qm && am && om) return 3;
+            if (qm && am && pen) return 4;
+            if (qm && am) return 5;
+            if (om && pen) return 6;
+            if (om) return 7;
             return 8;
           };
-          return score(left) - score(right);
+          return score(l) - score(r);
         });
-      const matchedItem = candidates[0]?.paItem;
-      const matchedKey = matchedItem?.claim_item_id || (
-        matchedItem ? `${matchedItem?.facility_tariff_item_id || 'item'}-${candidates[0]?.paIndex}` : null
-      );
-      if (matchedKey) usedItemKeys.add(matchedKey);
-
+      const m = candidate[0]?.p;
+      const key = m?.claim_item_id || (m ? `${m?.facility_tariff_item_id || 'item'}-${candidate[0]?.pi}` : null);
+      if (key) used.add(key);
       return {
-        id: matchedItem?.claim_item_id || `${event?.event_id || 'event'}-${index}-${id || 'item'}`,
-        name: matchedItem?.item_name || matchedItem?.description || matchedItem?.name || `Item ${id || index + 1}`,
-        quantity: item?.quantity ?? matchedItem?.quantity ?? 1,
-        requested_cost: toNumber(item?.requested_cost) ?? itemRequestedCost(matchedItem || item),
+        id: m?.claim_item_id || `${event?.event_id || 'event'}-${idx}-${id || 'item'}`,
+        name: m?.item_name || m?.description || m?.name || `Item ${id || idx + 1}`,
+        quantity: it?.quantity ?? m?.quantity ?? 1,
+        requested_cost: _evtNum(it?.requested_cost) ?? itemRequestedCost(m || it),
       };
     });
   }
-
-  return paItems.map((item, index) => ({
-    id: item?.claim_item_id || item?.facility_tariff_item_id || `${event?.event_id || 'event'}-${index}`,
-    name: item?.item_name || item?.description || item?.name || `Item ${index + 1}`,
-    quantity: item?.quantity ?? 1,
-    requested_cost: itemRequestedCost(item),
+  return pa.map((it, idx) => ({
+    id: it?.claim_item_id || it?.facility_tariff_item_id || `${event?.event_id || 'event'}-${idx}`,
+    name: it?.item_name || it?.description || it?.name || `Item ${idx + 1}`,
+    quantity: it?.quantity ?? 1,
+    requested_cost: itemRequestedCost(it),
   }));
 }
+function providerLabel(v) {
+  if (!v) return '';
+  if (typeof v === 'object') return v.name || v.role || v.email || '';
+  return String(v);
+}
+function itemsFromPayload(raw) {
+  const p = asObj(raw);
+  const list = asArr(p.pa_items).length ? p.pa_items
+    : asArr(p.submission?.items_added).length ? p.submission.items_added
+    : asArr(p.requested_items).length ? p.requested_items
+    : asArr(p.items).length ? p.items
+    : asArr(p.line_items);
+  return asArr(list).map((it) => {
+    const itm = asObj(it);
+    return {
+      name: itm.item_name || itm.description || itm.name || 'Item',
+      qty: Number(itm.quantity) || 1,
+      unit: Number(itm.unit_cost ?? itm.requested_cost ?? itm.cost ?? 0) || 0,
+      item_status: itm.status || null,
+      requested_cost: itm.requested_cost ?? null,
+      approved_cost: itm.approved_cost ?? null,
+      unit_approved_cost: itm.unit_approved_cost ?? null,
+      pricing_source: itm.pricing_source || null,
+      category_id: itm.category_id ?? null,
+      claim_item_id: itm.claim_item_id ?? null,
+      tariff_id: itm.facility_tariff_item_id ?? null,
+      type: itm.type || itm.category || null,
+      code: itm.code || itm.service_code || itm.cpt || null,
+      facility: itm.facility || itm.facility_name || null,
+      provider: itm.requesting_provider || itm.provider || null,
+      diagnosis: itm.diagnosis || itm.indication || null,
+      flags: itm.flags || null,
+      raw: itm,
+    };
+  });
+}
+function itemReqCost(it) {
+  const direct = Number(it.requested_cost ?? it.estimated_cost ?? it.cost ?? it.amount);
+  if (Number.isFinite(direct) && direct) return direct;
+  const unit = Number(it.unit_cost);
+  const qty = Number(it.quantity) || 1;
+  return Number.isFinite(unit) ? unit * qty : 0;
+}
+function requestedAmount(r, raw) {
+  const p = asObj(raw);
+  const items = asArr(p.pa_items).length ? p.pa_items : asArr(p.items);
+  const total = items.reduce((s, it) => s + itemReqCost(it), 0);
+  return total || Number(p.total_requested_cost) || Number(r.estimated_cost) || 0;
+}
+const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
+const STAGE_TIPS = {
+  Eligibility: 'Is the member valid — active, not expired, within age limit, enrollment valid?',
+  'Plan & Coverage': 'Is each requested item covered, excluded, or in a waiting period?',
+  'Utilization & Limits': 'Does this PA fit under the patient’s bucket limit and annual cap?',
+  'Final Decision': 'Aggregates stages 1–3 into APPROVE / DENY / ESCALATE plus an approved amount.',
+};
+const STAGE_Q = {
+  Eligibility: 'Is the member valid — active, not expired, within age limit?',
+  'Plan & Coverage': 'Is the item covered, excluded, or in a waiting period?',
+  'Utilization & Limits': 'Does the cost fit under the benefit and annual cap?',
+  'Final Decision': 'Aggregate stages 1–3 → APPROVE / DENY / ESCALATE',
+};
+function deriveStages(r) {
+  const logs = asArr(r.agent_logs);
+  if (logs.length) {
+    return logs.map((l) => ({
+      n: l.agent_num,
+      name: l.agent_name || STAGE_NAMES[l.agent_num] || '',
+      status: l.status === 'pass' || l.status === 'fail' ? l.status : (l.status || 'pass'),
+      time: fmtClock(l.logged_at),
+      result: l.result,
+    }));
+  }
+  const ar = asObj(r.agent_result);
+  const out = [];
+  for (let i = 1; i <= 4; i++) {
+    const o = ar['agent' + i];
+    if (o && typeof o === 'object') {
+      let status = 'pass';
+      if (i !== 4) {
+        if (o.pass === false) status = 'fail';
+        else if (o.pass === true) status = 'pass';
+      }
+      out.push({ n: i, name: STAGE_NAMES[i], status, time: '', result: o });
+    }
+  }
+  return out;
+}
+function mapRequest(r) {
+  const raw = asObj(r.raw_payload);
+  const enc = asObj(raw.encounter);
+  const ar = asObj(r.agent_result);
+  const isLive = raw.event_type === 'pa.submitted';
+  let status = normalizeStatus(r.status);
+  if (isLive && !r.decision) status = 'received';
+  const items = itemsFromPayload(raw);
+  const diagnosis = asArr(enc.diagnosis).join(', ') || (typeof enc.diagnosis === 'string' ? enc.diagnosis : '—');
+  return {
+    request_id: r.request_id,
+    display_request_id: r.display_request_id || r.request_id,
+    patient_id: r.patient_id || '—',
+    patient_name: r.patient_name || '',
+    status,
+    decision: r.decision,
+    confidence: r.confidence || ar.confidence,
+    agent_step: r.agent_step,
+    plan: r.plan || '—',
+    item_type: r.item_type || '',
+    item_description: r.item_description || '—',
+    line_item_count: r.line_item_count || items.length,
+    requested_amount: requestedAmount(r, raw),
+    amount_approved: r.amount_approved ?? ar.amount_approved ?? null,
+    facility: r.facility || '—',
+    requesting_provider: providerLabel(r.requesting_provider) || '—',
+    processing_seconds: r.processing_seconds,
+    received_at: r.received_at,
+    received_label: timeAgo(r.received_at),
+    diagnosis,
+    checkin_type: enc.checkin_type || '—',
+    reason: r.reason || ar.reasoning || ar.denial_reason || ar.escalation_reason || '',
+    error_message: r.error_message,
+    flags: asArr(ar.flags),
+    items,
+    note: isLive ? 'Live HMO payload received. Automated decisioning is paused pending mapping validation for this corporation.' : '',
+    stages: deriveStages(r),
+    raw_payload: r.raw_payload,
+    extracted_fields: r.extracted_fields,
+    patient_pa_count: r.patient_pa_count || 0,
+    coverage: (() => {
+      const ag2 = asObj(asObj(r.agent_result).agent2);
+      if (!ag2 || (!ag2.covered_items && !ag2.denied_items)) return null;
+      return {
+        covered: asArr(ag2.covered_items).map(String),
+        denied: asArr(ag2.denied_items).map(String),
+        reason: ag2.reason || null,
+        exclusion_detail: ag2.exclusion_detail || null,
+        plan_restriction_detail: ag2.plan_restriction_detail || null,
+        waiting_period_detail: ag2.waiting_period_detail || null,
+      };
+    })(),
+  };
+}
 
-function resultSummary(result) {
-  if (!result || typeof result !== 'object') return 'No structured result captured yet.';
+// Match a line item name against Agent 2's covered/denied lists. The agent
+// often appends a reason after an em/en-dash on denied items, e.g.
+// "HbsAg — Hepatitis treatment excluded".
+function findCoverageVerdict(itemName, coverage) {
+  if (!coverage || !itemName) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const ln = norm(itemName);
+  if (!ln) return null;
+  const stem = ln.split(' ').slice(0, 2).join(' ');
+  for (const d of (coverage.denied || [])) {
+    const nd = norm(d);
+    if (!nd) continue;
+    if (nd.startsWith(stem) || nd.includes(stem) || stem.includes(norm(d.split(/[—–\-]/)[0] || ''))) {
+      const parts = String(d).split(/\s*[—–]\s*|\s+-\s+/);
+      const reason = parts.length > 1 ? parts.slice(1).join(' — ') : (coverage.exclusion_detail || coverage.waiting_period_detail || coverage.plan_restriction_detail || coverage.reason || null);
+      return { verdict: 'denied', reason };
+    }
+  }
+  for (const c of (coverage.covered || [])) {
+    const nc = norm(c);
+    if (!nc) continue;
+    if (nc === ln || nc.includes(stem) || ln.includes(nc)) return { verdict: 'covered', reason: null };
+  }
+  return null;
+}
+function jsonPretty(obj) {
+  if (obj == null) return '<span style="color:#6b7385">null</span>';
+  let json;
+  try { json = JSON.stringify(obj, null, 2); } catch { return String(obj); }
+  return json
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"([^"]+)":/g, '<span class="k">"$1"</span>:')
+    .replace(/: "([^"]*)"/g, ': <span class="s">"$1"</span>')
+    .replace(/: (true|false)/g, ': <span class="b">$1</span>')
+    .replace(/: (-?\d[\d_]*\.?\d*)/g, ': <span class="n">$1</span>');
+}
+
+/* ============================================================
+   Small presentational pieces
+   ============================================================ */
+function Pill({ status, tipAlign }) {
+  const m = STATUS_META[status] || STATUS_META.pending;
+  // Pills sit at the right edge of queue rows + most drawer cards, so
+  // right-align the tooltip by default to avoid clipping the viewport.
+  return <span className={`pill ${m.cls}`} data-tip={m.help} data-tip-align={tipAlign || 'right'}><span className="dot" />{m.label}</span>;
+}
+function Conf({ level }) {
+  if (!level) return null;
   return (
-    result.reasoning ||
-    result.reason ||
-    result.denial_reason ||
-    result.escalation_reason ||
-    result.exclusion_detail ||
-    result.plan_restriction_detail ||
-    'Result captured.'
+    <span
+      className={`conf ${String(level).toLowerCase()}`}
+      data-tip="The agent’s self-assessment of how confident it is in this decision. Not a probability — a coarse signal."
+      data-tip-align="right"
+    >
+      <span className="bars"><i /><i /><i /></span><b>{level}</b> confidence
+    </span>
+  );
+}
+function PlanTag({ plan }) {
+  return <span className={`plan-tag ${planClass(plan)}`}>{plan}</span>;
+}
+// Toast plumbing — a tiny context so anywhere in the tree can fire a short
+// confirmation message in the bottom-right corner. No animation lib, just a
+// styled div that mounts for ~2.4s.
+const ToastContext = createContext({ show: () => {} });
+function useToast() { return useContext(ToastContext); }
+
+function ToastHost({ children }) {
+  const [toast, setToast] = useState(null);
+  const idRef = useRef(0);
+  const show = useCallback((message, kind = 'ok') => {
+    idRef.current += 1;
+    const id = idRef.current;
+    setToast({ id, message, kind });
+    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 2400);
+  }, []);
+  return (
+    <ToastContext.Provider value={{ show }}>
+      {children}
+      {toast ? (
+        <div role="status" aria-live="polite" style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+          padding: '10px 16px', borderRadius: 9,
+          background: toast.kind === 'ok' ? 'var(--ok-bg)' : 'var(--bad-bg)',
+          color: toast.kind === 'ok' ? 'var(--ok-ink)' : 'var(--bad-ink)',
+          border: `1px solid ${toast.kind === 'ok' ? 'var(--ok-line)' : 'var(--bad-line)'}`,
+          fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600,
+          boxShadow: '0 6px 24px rgba(0, 0, 0, 0.10)',
+          maxWidth: 360,
+        }}>{toast.message}</div>
+      ) : null}
+    </ToastContext.Provider>
   );
 }
 
-function agentOutcome(log) {
-  const result = log?.result;
-  if (result && typeof result === 'object') {
-    if (result.pass === true) return 'pass';
-    if (result.pass === false) return 'fail';
-    if (result.decision) return result.decision;
-  }
-  return log?.status || 'pending';
-}
-
-function safeJson(value) {
+async function copyToClipboard(text) {
   try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
+    if (navigator.clipboard && window.isSecureContext !== false) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_e) { /* fall through to fallback */ }
+  // Fallback for non-HTTPS / older browsers
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_e) {
+    return false;
   }
 }
 
+function CodeBlock({ data, style }) {
+  const { show } = useToast();
+  const onCopy = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
+    const ok = await copyToClipboard(text);
+    show(ok ? 'JSON copied to clipboard' : 'Copy failed — select & copy manually', ok ? 'ok' : 'bad');
+  };
+  return (
+    <div style={{ position: 'relative', ...style }}>
+      <button
+        type="button"
+        onClick={onCopy}
+        title="Copy JSON to clipboard"
+        style={{
+          position: 'absolute', top: 6, right: 6, zIndex: 1,
+          background: 'var(--bg)', border: '1px solid var(--line)',
+          padding: '3px 9px', borderRadius: 6,
+          fontFamily: 'var(--mono)', fontSize: 10.5, fontWeight: 600,
+          cursor: 'pointer', color: 'var(--ink-2)',
+        }}
+      >Copy</button>
+      <div className="codeblock" dangerouslySetInnerHTML={{ __html: jsonPretty(data) }} />
+    </div>
+  );
+}
+function Html({ html, className, style }) {
+  return <div className={className} style={style} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/* ============================================================
+   Report: metric card + queue table
+   ============================================================ */
+function MetricCard({ title, desc, big, chartHtml, moveH, moveP, tip }) {
+  return (
+    <div className="metric">
+      <h3 data-tip={tip} data-tip-align="left" data-tip-pos="below">{title}</h3>
+      <p className="desc">{desc}</p>
+      {big ? <div className="big" dangerouslySetInnerHTML={{ __html: big }} /> : null}
+      <div className="chart-wrap">
+        {chartHtml ? <Html html={chartHtml} /> : <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '24px 0' }}>Not enough data for a trend yet.</div>}
+      </div>
+      <div className="insight-sep"><span className="sparkle">✦</span> Insight is autogenerated</div>
+      <div className="move-h">{moveH}</div>
+      <p className="move-p">{moveP}</p>
+    </div>
+  );
+}
+function QueueHead() {
+  return (
+    <div className="qhead">
+      <span>Reference</span><span>Patient</span><span>Plan</span><span>Item</span>
+      <span style={{ textAlign: 'right' }}>Amount</span><span style={{ textAlign: 'right' }}>Status · latency</span><span style={{ textAlign: 'right' }}>Received</span>
+    </div>
+  );
+}
+function QueueRow({ r, selected, onSelect, onOpenPatient }) {
+  const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
+  return (
+    <div className={`qrow ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
+      <div className="ref">{ref}<small>{r.checkin_type} · {r.item_type || '—'}</small></div>
+      <div className="pt">
+        {r.patient_name || <span className="muted">Unnamed enrollee</span>}
+        {r.patient_pa_count > 1 ? (
+          <span
+            role={onOpenPatient ? 'button' : undefined}
+            tabIndex={onOpenPatient ? 0 : undefined}
+            className="mono"
+            data-tip={`This patient has ${r.patient_pa_count} pre-auth requests in this org. Click to open their patient page.`}
+            onClick={(e) => { if (!onOpenPatient) return; e.stopPropagation(); onOpenPatient(r.patient_id); }}
+            onKeyDown={(e) => { if (!onOpenPatient) return; if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onOpenPatient(r.patient_id); } }}
+            style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)', fontSize: 10.5, fontWeight: 600, verticalAlign: 'middle', cursor: onOpenPatient ? 'pointer' : 'default' }}
+          >
+            {r.patient_pa_count}× PAs
+          </span>
+        ) : null}
+        <small>{r.patient_id}</small>
+      </div>
+      <div className="plan"><PlanTag plan={r.plan} /></div>
+      <div className="item" title={r.item_description}>{r.item_description}{r.line_item_count > 1 ? <span className="muted"> ·{r.line_item_count}</span> : ''}</div>
+      <div className="amt">{fmtNGN(r.requested_amount)}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}><Pill status={r.status} /><span className="lat">{fmtSecs(r.processing_seconds)}</span></div>
+      <div className="when">{r.received_label}</div>
+    </div>
+  );
+}
+
+/* ============================================================
+   Detail (used inside the drawer)
+   ============================================================ */
+function DecisionBlock({ r }) {
+  const cls = (STATUS_META[r.status] || STATUS_META.pending).cls;
+  const verdict = (r.decision || (STATUS_META[r.status] || STATUS_META.pending).label).toUpperCase();
+  let body;
+  if (r.error_message) {
+    body = <p className="reason">{r.error_message}</p>;
+  } else if (r.status === 'received') {
+    body = <p className="reason">{r.note}</p>;
+  } else if (!r.decision) {
+    const label = (STATUS_META[r.status] || STATUS_META.pending).label.toLowerCase();
+    body = <p className="reason">No decision yet — request is <b>{label}</b>{r.agent_step ? <> at the <b>{r.agent_step}</b> stage.</> : '.'}</p>;
+  } else {
+    body = (
+      <>
+        <p className="reason">{r.reason}</p>
+        {r.status === 'approve' && (
+          <div className="amt-line">
+            <div><span className="lab">Requested</span>{fmtNGNfull(r.requested_amount)}</div>
+            <div><span className="lab">Approved</span><b>{fmtNGNfull(r.amount_approved)}</b></div>
+          </div>
+        )}
+      </>
+    );
+  }
+  return (
+    <div className={`decision ${cls}`}>
+      <div className="verdict-row"><span className="verdict">{verdict}</span><Pill status={r.status} /><Conf level={r.confidence} /></div>
+      {body}
+      {r.flags && r.flags.length > 0 && <div className="flags">{r.flags.map((f, i) => <span className="flag" key={i}>{f}</span>)}</div>}
+    </div>
+  );
+}
+function DetailsGrid({ r }) {
+  const cells = [
+    ['Enrollee', r.patient_name || 'Unnamed', false],
+    ['Insurance no.', r.patient_id, true],
+    ['Plan', r.plan, false],
+    ['Diagnosis', r.diagnosis, true],
+    ['Requested item', r.item_description, false],
+    ['Requested value', fmtNGNfull(r.requested_amount), true],
+    ['Line items', String(r.line_item_count || (r.items ? r.items.length : 0)), true],
+    ['Encounter', r.checkin_type, false],
+    ['Facility', r.facility, false],
+    ['Provider', r.requesting_provider, false],
+    ['Received', r.received_label, true],
+    ['Decision latency', fmtSecs(r.processing_seconds), true],
+  ];
+  return <div className="dgrid">{cells.map(([l, v, mono], i) => (
+    <div className="cell" key={i}><div className="lab">{l}</div><div className={`val ${mono ? 'mono' : ''}`}>{v}</div></div>
+  ))}</div>;
+}
+function LineItems({ r }) {
+  if (!r.items || !r.items.length) return null;
+  const cov = r.coverage;
+  const coveragePass = cov ? ((cov.denied || []).length === 0) : null;
+  return (
+    <div>
+      <div className="sec-h">Requested items <span className="n">{r.items.length}</span></div>
+      {cov && cov.reason ? (
+        <div style={{
+          marginTop: 8,
+          padding: '10px 12px',
+          background: coveragePass ? 'var(--ok-bg)' : 'var(--bad-bg)',
+          border: `1px solid ${coveragePass ? 'var(--ok-line)' : 'var(--bad-line)'}`,
+          color: coveragePass ? 'var(--ok-ink)' : 'var(--bad-ink)',
+          borderRadius: 9,
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+              Agent 2 · Plan &amp; Coverage
+            </span>
+            <span className="mono" style={{ fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 999, background: 'rgba(0,0,0,0.05)' }}>
+              {coveragePass ? 'PASS' : 'FAIL'}
+            </span>
+            {(cov.covered || []).length ? <span className="mono" style={{ fontSize: 11, opacity: 0.8 }}>{(cov.covered || []).length} covered</span> : null}
+            {(cov.denied || []).length ? <span className="mono" style={{ fontSize: 11, opacity: 0.8 }}>{(cov.denied || []).length} denied</span> : null}
+          </div>
+          <div>{cov.reason}</div>
+        </div>
+      ) : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+        {r.items.map((it, i) => {
+          const total = it.unit * it.qty;
+          const approved = Number(it.approved_cost) || 0;
+          const hasApprovedField = it.approved_cost != null;
+          const verdict = findCoverageVerdict(it.name, r.coverage);
+          const verdictColor = verdict?.verdict === 'denied'
+            ? { bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' }
+            : { bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
+          return (
+            <details key={i} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9 }}>
+              <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: '1fr auto 60px 130px 16px', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+                <div style={{ fontSize: 13 }}>{it.name}</div>
+                <div>
+                  {verdict ? (
+                    <span
+                      data-tip={verdict.verdict === 'denied'
+                        ? (verdict.reason ? `Agent 2 (Plan & Coverage) flagged this item: ${verdict.reason}` : 'Agent 2 (Plan & Coverage) found this item is excluded or hits a coverage rule.')
+                        : 'Agent 2 (Plan & Coverage) confirmed this item is covered by the patient’s plan.'}
+                      style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'var(--mono)' }}
+                    >
+                      {verdict.verdict}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>×{it.qty}</div>
+                <div className="mono" style={{ fontSize: 12, textAlign: 'right' }}>{fmtNGNfull(total)}</div>
+                <div style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 10, textAlign: 'right' }}>▾</div>
+              </summary>
+              <div style={{ padding: '12px 14px 14px', borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: '120px 1fr', rowGap: 6, columnGap: 12, fontSize: 12, fontFamily: 'var(--mono)' }}>
+                {verdict ? (
+                  <>
+                    <div className="muted">AI verdict</div>
+                    <div>
+                      <span style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase' }}>{verdict.verdict}</span>
+                      {verdict.reason ? <div style={{ marginTop: 6, color: 'var(--ink-2)', whiteSpace: 'normal' }}>{verdict.reason}</div> : null}
+                    </div>
+                  </>
+                ) : null}
+                <div className="muted">Unit cost</div><div>{fmtNGNfull(it.unit)}</div>
+                <div className="muted">Quantity</div><div>{it.qty}</div>
+                <div className="muted">Requested</div><div>{fmtNGNfull(total)}</div>
+                <div className="muted">Approved</div><div>{hasApprovedField ? (approved > 0 ? fmtNGNfull(approved) : '₦0 (not approved at item level)') : '—'}</div>
+                {it.item_status ? <><div className="muted">Item status</div><div>{it.item_status}</div></> : null}
+                {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
+                {it.category_id != null ? <><div className="muted">Category</div><div>#{it.category_id}</div></> : null}
+                {it.code ? <><div className="muted">Code</div><div>{it.code}</div></> : null}
+                {it.diagnosis ? <><div className="muted">Diagnosis</div><div>{String(it.diagnosis)}</div></> : null}
+                {it.provider ? <><div className="muted">Provider</div><div>{providerLabel(it.provider) || JSON.stringify(it.provider)}</div></> : null}
+                {it.facility ? <><div className="muted">Facility</div><div>{it.facility}</div></> : null}
+                {it.flags && (it.flags.active_count || it.flags.highest_severity) ? (
+                  <>
+                    <div className="muted">Flags</div>
+                    <div>
+                      {it.flags.active_count ? <span style={{ marginRight: 10 }}>active: {it.flags.active_count}</span> : null}
+                      {it.flags.highest_severity ? <span>severity: {it.flags.highest_severity}</span> : null}
+                    </div>
+                  </>
+                ) : null}
+                {(it.claim_item_id || it.tariff_id) ? (
+                  <>
+                    <div className="muted">IDs</div>
+                    <div>
+                      {it.claim_item_id ? <span style={{ marginRight: 10 }}>claim: {it.claim_item_id}</span> : null}
+                      {it.tariff_id ? <span>tariff: {it.tariff_id}</span> : null}
+                    </div>
+                  </>
+                ) : null}
+                <div style={{ gridColumn: '1 / -1', marginTop: 6 }}>
+                  <details>
+                    <summary style={{ cursor: 'pointer', color: 'var(--ink-3)', fontSize: 11 }}>Raw item JSON</summary>
+                    <CodeBlock data={it.raw} />
+                  </details>
+                </div>
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+// Render the structured fields each agent produces, lifted out of raw JSON
+// so an operator can read a stage at a glance.
+function StageHighlights({ stage }) {
+  const r = asObj(stage.result);
+  if (!r || !Object.keys(r).length) return null;
+  const chip = (label, ok) => (
+    <span style={{
+      fontFamily: 'var(--mono)', fontSize: 11, padding: '2px 8px', borderRadius: 999,
+      background: ok ? 'var(--ok-bg)' : 'var(--bad-bg)',
+      color: ok ? 'var(--ok-ink)' : 'var(--bad-ink)',
+      border: `1px solid ${ok ? 'var(--ok-line)' : 'var(--bad-line)'}`,
+    }}>{ok ? '✓' : '✕'} {label}</span>
+  );
+  const bar = (used, limit) => {
+    const pct = limit > 0 ? Math.min(100, (Number(used) || 0) / limit * 100) : 0;
+    const over = (Number(used) || 0) > limit;
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px', alignItems: 'center', gap: 8, fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        <span className="muted">{fmtNGN(used || 0)}</span>
+        <span style={{ height: 6, background: 'var(--bg-3)', borderRadius: 99, overflow: 'hidden' }}>
+          <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: over ? 'var(--bad)' : 'var(--ok)', borderRadius: 99 }} />
+        </span>
+        <span className="muted" style={{ textAlign: 'right' }}>of {fmtNGN(limit || 0)}</span>
+      </div>
+    );
+  };
+  if (stage.n === 1) {
+    const c = asObj(r.checks);
+    const items = [
+      ['Active', c.status_active],
+      ['Not expired', c.not_expired],
+      ['Age OK', c.age_ok],
+      ['Enrollment valid', c.enrollment_valid],
+    ].filter(([, v]) => v !== undefined);
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        {items.map(([k, v]) => <span key={k}>{chip(k, !!v)}</span>)}
+        {r.is_platinum_plus ? <span className="mono" style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)' }}>Platinum+</span> : null}
+      </div>
+    );
+  }
+  if (stage.n === 2) {
+    const covered = asArr(r.covered_items).length;
+    const denied = asArr(r.denied_items).length;
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        {r.benefit_category ? <span className="muted">Category: <b style={{ color: 'var(--ink)' }}>{r.benefit_category}</b></span> : null}
+        {covered ? <span style={{ marginLeft: 4 }}>{chip(`${covered} covered`, true)}</span> : null}
+        {denied ? <span>{chip(`${denied} denied`, false)}</span> : null}
+        {r.exclusion_triggered ? <span style={{ color: 'var(--bad-ink)' }}>· Exclusion: {r.exclusion_detail || 'yes'}</span> : null}
+        {r.waiting_period_issue ? <span style={{ color: 'var(--bad-ink)' }}>· Waiting period: {r.waiting_period_detail || 'yes'}</span> : null}
+        {r.plan_restriction ? <span style={{ color: 'var(--bad-ink)' }}>· Plan restriction</span> : null}
+      </div>
+    );
+  }
+  if (stage.n === 3) {
+    if (r.utilization_data_missing && r.bucket_used == null && r.bucket_limit == null) {
+      return (
+        <div style={{ marginTop: 6, fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--bad-ink)' }}>
+          Consumption data unavailable — agent skipped.
+        </div>
+      );
+    }
+    return (
+      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+        {r.bucket ? (
+          <div>
+            <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 4 }}>{r.bucket}{r.bucket_exceeded ? ' · exceeded' : ''}</div>
+            {bar(r.bucket_used, r.bucket_limit)}
+          </div>
+        ) : null}
+        <div>
+          <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 4 }}>Annual cap{r.annual_cap_exceeded ? ' · exceeded' : ''}</div>
+          {bar(r.annual_cap_used, r.annual_cap_limit)}
+        </div>
+        {r.estimated_cost ? <div className="muted mono" style={{ fontSize: 11.5 }}>This request: <b style={{ color: 'var(--ink)' }}>{fmtNGN(r.estimated_cost)}</b></div> : null}
+      </div>
+    );
+  }
+  if (stage.n === 4) {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        {r.decision ? <span className="mono" style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--bg-3)', color: 'var(--ink)', border: '1px solid var(--line)', fontWeight: 600 }}>{r.decision}</span> : null}
+        {r.confidence ? <span className="muted">Confidence: <b style={{ color: 'var(--ink)' }}>{r.confidence}</b></span> : null}
+        {r.amount_approved != null ? <span className="muted">Approved: <b style={{ color: 'var(--ink)' }}>{fmtNGNfull(r.amount_approved)}</b></span> : null}
+        {r.no_preauth_required ? <span style={{ color: 'var(--ok-ink)' }}>· No PA required</span> : null}
+        {asArr(r.flags).length ? <span style={{ color: 'var(--bad-ink)' }}>· Flags: {asArr(r.flags).join('; ')}</span> : null}
+      </div>
+    );
+  }
+  return null;
+}
+
+function AgentTimeline({ r }) {
+  if (!r.stages || !r.stages.length) {
+    return <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>Pipeline has not started for this request{r.status === 'received' ? ' — awaiting auto-decision.' : '.'}</div>;
+  }
+  return (
+    <div className="timeline">
+      {r.stages.map((s, i) => {
+        const cls = s.status === 'processing' ? 'skip' : s.status;
+        const node = s.status === 'pass' ? '✓' : s.status === 'fail' ? '✕' : s.n;
+        const statTxt = s.status === 'processing' ? 'running' : s.status;
+        const reason = asObj(s.result).reason || asObj(s.result).reasoning || asObj(s.result).denial_reason || asObj(s.result).escalation_reason || null;
+        return (
+          <div className={`stage ${cls}`} key={i}>
+            <div className="node">{node}</div>
+            <div className="s-top">
+              <span className="s-name" data-tip={STAGE_TIPS[s.name]} data-tip-align="left">{s.n}. {s.name}</span>
+              <span className="s-stat">{statTxt}</span>
+              {s.time ? <span className="s-time">{s.time}</span> : null}
+            </div>
+            <p className="s-sum">{STAGE_Q[s.name] || ''}</p>
+            {reason ? <p style={{ fontSize: 12.5, color: 'var(--ink)', margin: '6px 0 0', lineHeight: 1.55 }}>{reason}</p> : null}
+            <StageHighlights stage={s} />
+            {s.result ? <div className="s-raw" style={{ marginTop: 8 }}><details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details></div> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient }) {
+  if (!r) return null;
+  return (
+    <div className="detail">
+      <div className="dhead">
+        <div>
+          <div className="dref">{r.display_request_id}</div>
+          {onOpenPatient && r.patient_id && r.patient_id !== '—' && r.patient_id.toLowerCase() !== 'unknown' ? (
+            <h2
+              className="dname"
+              role="button"
+              tabIndex={0}
+              data-tip="Open this patient's full page — all their PAs, totals, and outcome distribution."
+              data-tip-align="left"
+              onClick={() => onOpenPatient(r.patient_id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPatient(r.patient_id); } }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 4, textDecorationColor: 'var(--indigo-soft)' }}
+            >
+              {r.patient_name || 'Unnamed enrollee'}
+            </h2>
+          ) : (
+            <h2 className="dname">{r.patient_name || 'Unnamed enrollee'}</h2>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }} data-admin-only="">
+          <button className="btn sm">Override</button>
+          <button className="btn sm">Reassign</button>
+        </div>
+      </div>
+      <DecisionBlock r={r} />
+      <div><div className="sec-h">Request details</div><DetailsGrid r={r} /></div>
+      <LineItems r={r} />
+      {siblings && siblings.length > 0 ? (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div className="sec-h" data-tip="Every other PA from the same patient_id (or insurance_no fallback when patient_id is unknown), across all queue pages." data-tip-align="left" style={{ marginBottom: 0 }}>Other requests from this patient <span className="n">{siblings.length}</span></div>
+            {onOpenPatient && r.patient_id && r.patient_id !== '—' && r.patient_id.toLowerCase() !== 'unknown' ? (
+              <button
+                className="btn sm"
+                onClick={() => onOpenPatient(r.patient_id)}
+                data-tip="Opens the dedicated patient page with totals, outcome distribution, and all PAs in one view."
+                data-tip-align="right"
+                style={{ fontSize: 11 }}
+              >View patient page →</button>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+            {siblings.slice(0, 8).map((s) => (
+              <button key={s.request_id} onClick={() => onSelectSibling && onSelectSibling(s.request_id)} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px', cursor: 'pointer', textAlign: 'left' }} title="Switch to this request">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>{s.display_request_id}</span>
+                  <Pill status={s.status} />
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--ink)', marginTop: 4 }}>{s.item_description}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{s.received_label} · {fmtNGN(s.requested_amount)}</div>
+              </button>
+            ))}
+            {siblings.length > 8 ? <div className="muted mono" style={{ fontSize: 11.5, padding: '4px 2px' }}>+{siblings.length - 8} more</div> : null}
+          </div>
+        </div>
+      ) : null}
+      {(paEvents && paEvents.length) || paEventsLoading || paEventsError || (r.event_count && r.event_count > 0) ? (
+        <div>
+          <div className="sec-h" data-tip="Each row is one webhook delivery from the HMO for this check-in. First event = initial capture; later events = additional items added by the doctor." data-tip-align="left">PA event timeline <span className="n">{(paEvents || []).length || r.event_count || 0}</span></div>
+          {paEventsError ? (
+            <div style={{ padding: '10px 12px', background: 'var(--bad-bg)', color: 'var(--bad-ink)', border: '1px solid var(--bad-line)', borderRadius: 9, fontSize: 12, fontFamily: 'var(--mono)' }}>
+              Couldn't load events: {paEventsError}
+            </div>
+          ) : null}
+          {paEventsLoading && !(paEvents || []).length ? (
+            <div className="muted mono" style={{ fontSize: 12, padding: '8px 2px' }}>Loading event history…</div>
+          ) : null}
+          {(paEvents || []).length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+              {paEvents.map((event) => {
+                const seq = _evtNum(event.event_sequence) || 0;
+                const items = itemsAddedFromEvent(event);
+                const when = event.submitted_at || event.occurred_at || event.created_at;
+                return (
+                  <div key={event.event_id || event.id} style={{ display: 'grid', gridTemplateColumns: '32px 1fr', gap: 10 }}>
+                    <div style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: seq <= 1 ? 'var(--indigo)' : 'var(--ink)', color: '#fff', fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700 }}>{seq || '?'}</div>
+                    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
+                        <b style={{ fontSize: 13 }}>{seq <= 1 ? 'First captured event' : 'Additional items added'}</b>
+                        <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>{fmtNGNfull(eventValue(event))}</span>
+                      </div>
+                      <div className="muted mono" style={{ fontSize: 11, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        <span>{eventItemCount(event)} line item{eventItemCount(event) === 1 ? '' : 's'}</span>
+                        <span>· Snapshot: {fmtNGNfull(event.total_requested_cost)}</span>
+                        {when ? <span>· {timeAgo(when)}</span> : null}
+                      </div>
+                      {items && items.length ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                          {items.map((it) => (
+                            <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 110px', gap: 8, alignItems: 'center', padding: '6px 9px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 7 }}>
+                              <span style={{ fontSize: 12 }}>{it.name}</span>
+                              <span className="muted mono" style={{ fontSize: 11 }}>×{it.quantity}</span>
+                              <span className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{fmtNGNfull(it.requested_cost)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>
+                      )}
+                      <details style={{ marginTop: 8 }}>
+                        <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>Event JSON</summary>
+                        <CodeBlock data={event.raw_payload || event.payload_summary || event} style={{ marginTop: 6 }} />
+                      </details>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !paEventsLoading && !paEventsError ? (
+            <div className="muted mono" style={{ fontSize: 12, padding: '8px 2px' }}>
+              No event history yet — request captured before event tracking, or backend returned none.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div>
+        <div className="sec-h" data-tip="All 4 agents that ran for this PA: Eligibility → Coverage → Limits → Final Decision. Each stage shows its reason and structured result." data-tip-align="left">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
+        <AgentTimeline r={r} />
+      </div>
+      <div>
+        <div className="sec-h">Raw / extracted payload</div>
+        <details>
+          <summary style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--ink-3)', cursor: 'pointer' }}>View extracted_fields + raw_payload</summary>
+          <CodeBlock data={r.raw_payload || r.extracted_fields} style={{ marginTop: 10 }} />
+        </details>
+      </div>
+    </div>
+  );
+}
+function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient }) {
+  return (
+    <>
+      <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} />
+      <aside className={`drawer ${open ? 'open' : ''}`}>
+        <button className="icon-btn dclose" onClick={onClose} aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} paEvents={paEvents} paEventsLoading={paEventsLoading} paEventsError={paEventsError} onOpenPatient={onOpenPatient} /> : null}</div></div>
+      </aside>
+    </>
+  );
+}
+
+/* ============================================================
+   Chrome: status bar, sidebar, ask bar
+   ============================================================ */
+function StatusBar({ session, role, onRole, refreshedLabel }) {
+  const org = session.org_name || 'Organization';
+  const short = org.split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+  const isAdmin = (session.role || 'member') === 'admin';
+  return (
+    <div className="statusbar">
+      <div className="sb-org"><span className="org-dot">{short}</span><b>{org}</b><span className="scope">org-scoped</span></div>
+      <div className="sb-refresh" data-tip="Last successful fetch. Auto-refreshes every 15s. Click the refresh icon on the page header to force a refetch." data-tip-pos="below"><span className="spin" /> {refreshedLabel}</div>
+      <div className="sb-right">
+        {isAdmin ? (
+          <span className="roleswitch" data-tip="Preview what each role sees. Doesn't change your actual role — just toggles the UI for testing." data-tip-pos="below" data-tip-align="right">
+            <button className={role === 'admin' ? 'on' : ''} onClick={() => onRole('admin')}>Admin</button>
+            <button className={role === 'member' ? 'on' : ''} onClick={() => onRole('member')}>Member</button>
+          </span>
+        ) : (
+          <span className="roleswitch"><button className="on">Member</button></span>
+        )}
+        <span className="live-toggle"><span className="led" /> Live</span>
+      </div>
+    </div>
+  );
+}
+const NAV = [
+  { id: 'intake', label: 'Pre-Auth Intake', live: true },
+  { id: 'health', label: 'Integration Health', live: true },
+  { id: 'audit', label: 'Audit Trail', live: true },
+  { id: 'patients', label: 'Patients', live: true },
+  { id: 'eligibility', label: 'Eligibility Checks', live: false },
+  { id: 'support', label: 'Support', live: false },
+];
+const NAV_ADMIN = [
+  { id: 'team', label: 'Team', live: true, lock: true },
+  { id: 'apikey', label: 'API Key', live: true, lock: true },
+];
+const NAV_PLATFORM = [
+  { id: 'onboarding', label: 'Onboarding', live: true, lock: true },
+];
+function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleCollapse, isPlatformAdmin, onSignOut }) {
+  const initials = (session.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+  const item = (n) => (
+    <a
+      key={n.id}
+      className={`navitem ${n.lock ? 'lock' : ''} ${n.id === active ? 'active' : ''} ${n.live ? '' : 'soon'}`}
+      href="#"
+      title={collapsed ? n.label : undefined}
+      data-tip={!n.live ? 'Coming soon — this page exists in the design but isn’t wired to a backend endpoint yet.' : (n.lock ? 'Admin-only feature. Hidden for members.' : undefined)}
+      data-tip-pos="right"
+      onClick={(e) => { e.preventDefault(); onNav(n.id); }}
+    >
+      <span className="gl" /><span className="nav-label">{n.label}</span>
+      {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)}
+    </a>
+  );
+  return (
+    <aside className="side">
+      <div className="side-head">
+        <span className="side-brand"><img src="/saaspro-mark.png" alt="SaaSPro" className="brand-mark" /><span className="brand-name">SaaSPro</span></span>
+        <button className="side-toggle" onClick={onToggleCollapse} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-label="Toggle sidebar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{collapsed ? <path d="M9 18l6-6-6-6" /> : <path d="M15 18l-6-6 6-6" />}</svg>
+        </button>
+      </div>
+      {NAV.map(item)}
+      <div className="nav-group" data-admin-only="">
+        <div className="grp">Admin</div>
+        {NAV_ADMIN.map(item)}
+      </div>
+      {isPlatformAdmin && (
+        <div className="nav-group">
+          <div className="grp">Platform</div>
+          {NAV_PLATFORM.map(item)}
+        </div>
+      )}
+      <div className="side-foot">
+        <div className="row">
+          <span className="ava">{initials}</span>
+          <span className="who">{session.name}<small>{(session.role || 'member').toUpperCase()} · {session.org_name}</small></span>
+          <button className="signout-btn" onClick={onSignOut} title="Sign out" aria-label="Sign out">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+function AskBar({ context }) {
+  const [q, setQ] = useState('');
+  return (
+    <div className="askbar-wrap">
+      <form className="askbar" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
+        <div className="ask-input">
+          <span className="caret">▌</span>
+          <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Ask me about ${context}…`} />
+          <span className="face">🫥</span>
+          <button className="ask-send" type="submit">Ask</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ============================================================
+   Integration Health (wired to /auth/webhook-delivery-logs)
+   ============================================================ */
+function KpiTile({ label, val, sub }) {
+  return (
+    <div className="kpi">
+      <div className="k-label">{label}</div>
+      <div className="k-val tnum" dangerouslySetInnerHTML={{ __html: val }} />
+      {sub ? <div className="k-sub" dangerouslySetInnerHTML={{ __html: sub }} /> : null}
+    </div>
+  );
+}
+function HealthView({ data, loading, error, org }) {
+  const d = (data && data.summary) || {};
+  const logs = (data && data.logs) || [];
+  const recv = d.total_received || 0;
+  const pct = (n) => (recv ? ((n / recv) * 100).toFixed(1) : '0.0');
+  const funnel = chartHBars([
+    { k: 'Received', v: d.total_received || 0 },
+    { k: 'Auth ok', v: d.auth_success || 0 },
+    { k: 'Valid', v: d.payload_valid || 0 },
+    { k: 'DB saved', v: d.db_saved || 0 },
+    { k: 'HTTP 2xx', v: d.http_success || 0 },
+  ]);
+  const clean = (d.auth_failed || 0) + (d.payload_invalid || 0) + (d.db_failed || 0) === 0;
+  const attemptMeta = (l) => {
+    if (l.auth_status && l.auth_status !== 'auth_success') return { label: 'auth failed', color: 'var(--bad)' };
+    if (l.payload_valid === false) return { label: 'invalid', color: 'var(--warn)' };
+    if (l.db_insert_status === 'db_insert_failed') return { label: 'db failed', color: 'var(--bad)' };
+    return { label: 'valid', color: 'var(--ok)' };
+  };
+  const shortId = (l) => (l.checkin_id ? l.checkin_id.split('/').slice(-1)[0] : (l.delivery_id || '').slice(0, 8));
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Integration Health</h1></div>
+      <p className="page-sub">Inbound webhook deliveries from <b>{org}</b> · <span className="muted">latest {d.latest_received_at ? timeAgo(d.latest_received_at) : '—'}</span></p>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Every webhook the HMO sends — successful or not — is logged here. Use this when {org === 'AMAN' ? 'Aman' : 'your HMO'} says &ldquo;I sent it but you didn&rsquo;t receive it&rdquo;: failed deliveries (bad auth, malformed payload, parse errors) appear here even when they never become a PA. The queue and the Patients page only show requests that landed successfully — this page is the source of truth for the delivery layer.
+      </p>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      <div className="kpi-strip section-gap" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+        <KpiTile label="Deliveries received" val={(d.total_received || 0).toLocaleString()} sub={`${d.latest_received_at ? timeAgo(d.latest_received_at) : '—'} latest`} />
+        <KpiTile label="Auth success" val={`${pct(d.auth_success || 0)}<small>%</small>`} sub={`${d.auth_failed || 0} failed`} />
+        <KpiTile label="Payload valid" val={`${pct(d.payload_valid || 0)}<small>%</small>`} sub={`${d.payload_invalid || 0} invalid`} />
+        <KpiTile label="Avg processing" val={`${d.avg_processing_time_ms != null ? Math.round(d.avg_processing_time_ms) : '—'}<small>ms</small>`} sub={`${d.http_failed || 0} HTTP errors`} />
+      </div>
+      <div className="grid-2 section-gap">
+        <div className="metric">
+          <h3>Delivery funnel</h3><p className="desc">Where inbound requests succeed or drop off</p>
+          <div className="chart-wrap"><Html html={funnel} /></div>
+          <div className="insight-sep"><span className="sparkle">✦</span> Insight is autogenerated</div>
+          <div className="move-h">{recv === 0 ? 'No deliveries yet' : clean ? 'Pipe is healthy' : 'Some deliveries dropped'}</div>
+          <p className="move-p">{d.auth_failed || 0} auth failures and {d.payload_invalid || 0} invalid payloads in the window. {d.duplicate_event_attempts || 0} duplicate events and {d.repeated_checkin_attempts || 0} repeated check-ins were de-duplicated.</p>
+        </div>
+        <div className="metric">
+          <h3>Recent delivery attempts</h3><p className="desc">Including rejected deliveries, for observability</p>
+          <div className="chart-wrap" style={{ marginTop: 14 }}>
+            {logs.length === 0 ? (
+              <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '16px 0' }}>{loading ? 'Loading…' : 'No deliveries in range.'}</div>
+            ) : logs.slice(0, 8).map((l) => {
+              const m = attemptMeta(l);
+              return (
+                <div key={l.delivery_id} style={{ display: 'grid', gridTemplateColumns: '96px 1fr 80px 64px 44px', gap: 10, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: '11.5px', padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
+                  <span title={l.checkin_id || l.delivery_id}>{shortId(l)}</span>
+                  <span className="muted">{l.created_at ? timeAgo(l.created_at) : '—'}</span>
+                  <span style={{ color: m.color }}>{m.label}</span>
+                  <span className="muted">{l.db_insert_status === 'db_upsert_success' ? 'saved' : (l.db_insert_status === 'db_insert_failed' ? 'failed' : '—')}</span>
+                  <b>{l.http_status_returned ?? '—'}</b>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   Patients — index + detail (wired to /auth/patients + /auth/patient-history)
+   ============================================================ */
+const OUTCOME_DOT = {
+  approve:    'var(--ok)',
+  deny:       'var(--bad)',
+  escalate:   'var(--warn)',
+  processing: 'var(--indigo)',
+  pending:    'var(--slate)',
+  received:   'var(--recv)',
+  error:      'var(--bad)',
+};
+const OUTCOME_LABEL = {
+  approve: 'approve', deny: 'deny', escalate: 'escalate',
+  processing: 'processing', pending: 'pending', received: 'received', error: 'error',
+};
+function OutcomePills({ counts, size = 'sm' }) {
+  const items = ['approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error']
+    .map((k) => [k, counts?.[k] || 0])
+    .filter(([, n]) => n > 0);
+  if (!items.length) return <span className="muted mono" style={{ fontSize: 11 }}>—</span>;
+  const padding = size === 'lg' ? '4px 10px' : '2px 8px';
+  const fontSize = size === 'lg' ? 12 : 11;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {items.map(([k, n]) => (
+        <span
+          key={k}
+          className="mono"
+          data-tip={`${n} ${OUTCOME_LABEL[k]} ${n === 1 ? 'request' : 'requests'} from this patient.`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding, borderRadius: 999, fontSize, fontWeight: 600,
+            background: 'var(--bg-2)', border: '1px solid var(--line)', color: 'var(--ink-2)',
+          }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: 99, background: OUTCOME_DOT[k] }} />
+          {n} {OUTCOME_LABEL[k]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, setOutcome, page, setPage, onOpenPatient, onBack }) {
+  const list = (data && data.patients) || [];
+  const meta = data?.meta || {};
+  const pagination = data?.pagination || {};
+  const dw = meta.data_window || {};
+  const fmt = (iso) => { if (!iso) return null; const d = new Date(iso); return isNaN(d) ? null : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+  const dwFrom = fmt(dw.earliest); const dwTo = fmt(dw.latest);
+  return (
+    <>
+      {onBack ? (
+        <div style={{ marginBottom: 12 }}>
+          <button className="btn sm" onClick={onBack} data-tip="Return to the Pre-Auth Intake queue." data-tip-align="left">← Back to Pre-Auth Intake</button>
+        </div>
+      ) : null}
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Patients</h1>
+          <p className="page-sub">
+            <span className="cal" aria-hidden="true"><IconCal /></span>
+            <span data-tip="Distinct patients with at least one PA in this org. 'Unknown' patient IDs are excluded.">{meta.distinct_patients_org_total ?? 0} patients</span>
+            {dwFrom && dwTo ? <><span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>{dwFrom} → {dwTo}</> : null}
+          </p>
+        </div>
+      </div>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Investigate at the enrollee level. Each row groups every PA we've received for one patient — sort by volume to spot frequent requesters, by value to flag high spend, or by denials to surface possible misuse. Click any row for the patient's full timeline.
+      </p>
+      <div className="toolbar" style={{ marginTop: 18, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }} data-tip="Search across patient name, patient ID, and insurance number." data-tip-pos="below" data-tip-align="left">
+          <IconSearch />
+          <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search by name or ID…" />
+        </div>
+        <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Reorder the list by recency, volume, value, or denial count." data-tip-pos="below">
+          <span className="muted mono" style={{ fontSize: 11 }}>Sort</span>
+          <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
+            <option value="latest">Latest activity</option>
+            <option value="count">Most PAs</option>
+            <option value="requested">Highest requested</option>
+            <option value="approved">Highest approved</option>
+            <option value="denials">Most denials</option>
+          </select>
+        </div>
+        <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Narrow to patients who have at least one PA of a given outcome." data-tip-pos="below">
+          <span className="muted mono" style={{ fontSize: 11 }}>Outcome</span>
+          <select value={outcome} onChange={(e) => { setOutcome(e.target.value); setPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
+            <option value="all">All patients</option>
+            <option value="denials">Has denials</option>
+            <option value="escalations">Has escalations</option>
+            <option value="approvals">Has approvals</option>
+            <option value="open">Has open PAs</option>
+          </select>
+        </div>
+      </div>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      <div className="queue">
+        <div className="qhead" style={{ gridTemplateColumns: '1.6fr 70px 120px 120px 1.4fr 90px' }}>
+          <span>Patient</span>
+          <span data-tip="Number of pre-auth requests this patient has in this org.">PAs</span>
+          <span data-tip="Sum of requested amounts across all their PAs.">Requested</span>
+          <span data-tip="Sum of agent-approved amounts (only counts APPROVE decisions).">Approved</span>
+          <span data-tip="Distribution of decisions across this patient's PAs.">Outcomes</span>
+          <span style={{ textAlign: 'right' }}>Latest</span>
+        </div>
+        <div>
+          {loading && !list.length ? (
+            <div className="muted mono" style={{ padding: '24px 14px', fontSize: 12 }}>Loading patients…</div>
+          ) : !list.length ? (
+            <div className="stub-empty" style={{ padding: '60px 24px' }}>
+              <div className="ph">◐</div><h4>No patients match</h4>
+              <p>{q ? 'Try a broader search.' : 'No PAs in this org yet, or all rows have unknown patient IDs.'}</p>
+            </div>
+          ) : list.map((p) => (
+            <div
+              key={p.patient_id}
+              className="qrow"
+              style={{ gridTemplateColumns: '1.6fr 70px 120px 120px 1.4fr 90px', cursor: 'pointer' }}
+              onClick={() => onOpenPatient(p.patient_id)}
+            >
+              <div className="pt">
+                {p.patient_name || <span className="muted">Unnamed enrollee</span>}
+                <small>{p.patient_id}{p.insurance_no && p.insurance_no !== p.patient_id ? ` · ${p.insurance_no}` : ''}</small>
+              </div>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{p.pa_count}</div>
+              <div className="mono" style={{ fontSize: 12.5 }}>{fmtNGN(p.total_requested)}</div>
+              <div className="mono" style={{ fontSize: 12.5 }}>{p.total_approved > 0 ? fmtNGN(p.total_approved) : <span className="muted">—</span>}</div>
+              <div><OutcomePills counts={p.outcome_counts} /></div>
+              <div className="when" style={{ textAlign: 'right' }}>{p.latest_received_at ? timeAgo(p.latest_received_at) : '—'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {(pagination.total_pages || 0) > 1 ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>
+          <span>Page {pagination.page} of {pagination.total_pages} · {pagination.total} patients</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn sm" disabled={pagination.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
+            <button className="btn sm" disabled={pagination.page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}>Next ›</button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, onDownloadPdf, session, orgName }) {
+  // `patient.requests` come from /auth/patient-history (un-mapped). The
+  // detail rows below run them through mapRequest; the ReportSheet also
+  // wants the mapped shape (with items, stages, etc).
+  const requests = (patient?.requests || []).map(mapRequest);
+  // Aggregate the same shape /auth/patients returns, but client-side from the
+  // full /patient-history payload (more accurate than the index aggregate).
+  const counts = requests.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+  const totalRequested = requests.reduce((s, r) => s + (Number(r.requested_amount) || 0), 0);
+  const totalApproved  = requests.reduce((s, r) => s + (r.status === 'approve' ? Number(r.amount_approved || 0) : 0), 0);
+  const header = requests[0] || {};
+  return (
+    <>
+      {/* PDF report portal — rendered into document.body, hidden on screen.
+          @media print hides everything else and reveals only this. The
+          audit metadata (downloaded by, downloaded at) is baked into it. */}
+      <PatientReportSheet
+        patient={patient}
+        requests={(patient?.requests || []).map(mapRequest)}
+        session={session}
+        orgName={orgName}
+      />
+      <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <button className="btn sm" onClick={onBack} data-tip="Return to the patients list." data-tip-align="left">← Back to patients</button>
+        <span style={{ flex: 1 }} />
+        <button
+          className="btn sm"
+          onClick={onDownloadPdf}
+          data-tip="Print the full report as a PDF. The output includes a header with your name, email, the org, and the timestamp for audit purposes."
+          data-tip-align="right"
+        >Download PDF</button>
+      </div>
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 12, padding: '20px 22px', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <div className="muted mono" style={{ fontSize: 12, marginBottom: 4 }}>
+              {patient?.patient_id || '—'}{header.plan && header.plan !== '—' ? <> · <PlanTag plan={header.plan} /></> : null}
+            </div>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 26, fontWeight: 600, margin: 0, color: 'var(--ink)' }}>
+              {header.patient_name || 'Unnamed enrollee'}
+            </h1>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 36, marginTop: 22, borderTop: '1px dashed var(--line-2)', paddingTop: 16, fontFamily: 'var(--mono)' }}>
+          <div>
+            <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' }} data-tip="Number of pre-auth requests this patient has on the platform.">Pre-auths</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{requests.length}</div>
+          </div>
+          <div>
+            <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' }} data-tip="Sum of requested amounts across all this patient's PAs.">Requested · total</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{fmtNGN(totalRequested)}</div>
+          </div>
+          <div>
+            <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' }} data-tip="Sum of agent-approved amounts. Counts APPROVE decisions only.">Approved · total</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{fmtNGN(totalApproved)}</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase', fontFamily: 'var(--mono)', marginBottom: 8 }}>Outcomes</div>
+          <OutcomePills counts={counts} size="lg" />
+        </div>
+      </div>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      {requests.length > 1 ? (
+        <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
+          <span className="led" style={{ background: 'var(--indigo)' }} />
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+            This enrollee has <b>{requests.length} pre-auth requests</b>. Each row below has its own 4-agent reasoning timeline — expand any request to see exactly how the AI decided it.
+          </span>
+        </div>
+      ) : null}
+      {loading && !requests.length ? (
+        <div className="muted mono" style={{ padding: '24px 14px', fontSize: 12 }}>Loading patient history…</div>
+      ) : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {requests.map((r) => {
+          const isOpen = openedIds.has(r.request_id);
+          const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
+          return (
+            <div key={r.request_id} className="pa-print-card" style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 9, overflow: 'hidden' }}>
+              <button
+                onClick={() => toggleRow(r.request_id)}
+                style={{
+                  width: '100%', display: 'grid', gridTemplateColumns: '20px 1.6fr 2fr 110px 130px 80px', alignItems: 'center',
+                  gap: 12, padding: '12px 14px', cursor: 'pointer', background: 'transparent', border: 'none', textAlign: 'left',
+                }}
+              >
+                <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 11 }}>{isOpen ? '▾' : '▸'}</span>
+                <span className="mono" style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{ref}</span>
+                <span style={{ fontSize: 13 }}>{r.item_description}{r.line_item_count > 1 ? <span className="muted"> · {r.line_item_count}</span> : ''}</span>
+                <span className="mono" style={{ fontSize: 12.5, textAlign: 'right' }}>{fmtNGN(r.requested_amount)}</span>
+                <span style={{ textAlign: 'right' }}><Pill status={r.status} /></span>
+                <span className="when" style={{ textAlign: 'right' }}>{r.received_label}</span>
+              </button>
+              {isOpen ? (
+                <div style={{ padding: '14px 18px 20px', borderTop: '1px solid var(--line)', background: 'var(--bg-2)' }}>
+                  <DetailView r={r} siblings={[]} onSelectSibling={() => {}} paEvents={[]} paEventsLoading={false} paEventsError="" />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {!loading && !requests.length ? (
+          <div className="stub-empty" style={{ padding: '60px 24px' }}>
+            <div className="ph">◐</div><h4>No PAs for this patient</h4>
+            <p>This patient ID didn't match any records in this org.</p>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   Audit Trail (wired to /auth/webhook-audit-trail)
+   ============================================================ */
+function AuditView({ data, loading, error, query, setQuery, onTrace }) {
+  const traces = (data && data.traces) || [];
+  const t = traces[0];
+  const nodes = [];
+  if (t) {
+    const dl = t.delivery || {};
+    const pa = t.preauth || {};
+    const ag = t.agent || {};
+    const deliveryOk = dl.auth_status === 'auth_success' && (dl.http_status_returned ? dl.http_status_returned < 400 : true);
+    nodes.push({ st: deliveryOk ? 'pass' : 'fail', name: 'Webhook delivery', sum: [dl.auth_status, dl.payload_status, dl.processing_time_ms != null ? dl.processing_time_ms + 'ms' : null].filter(Boolean).join(' · '), time: dl.received_at ? fmtClock(dl.received_at) : '' });
+    nodes.push({ st: pa.request_id ? 'pass' : 'skip', name: 'Request stored', sum: pa.request_id ? `${pa.request_id} · status ${pa.status || '—'}` : 'not stored', time: pa.received_at ? fmtClock(pa.received_at) : '' });
+    asArr(ag.agent_logs).forEach((l) => nodes.push({ st: l.status === 'pass' || l.status === 'fail' ? l.status : 'pass', name: l.agent_name || STAGE_NAMES[l.agent_num] || 'Stage', sum: STAGE_Q[l.agent_name] || '', time: l.logged_at ? fmtClock(l.logged_at) : '' }));
+    if (pa.decision) {
+      const dst = pa.decision === 'APPROVE' ? 'pass' : pa.decision === 'DENY' ? 'fail' : 'skip';
+      nodes.push({ st: dst, name: `Outcome — ${pa.decision}`, sum: asObj(ag.agent_result).confidence ? `${asObj(ag.agent_result).confidence} confidence recorded` : 'Decision recorded', time: pa.processed_at ? fmtClock(pa.processed_at) : '' });
+    }
+  }
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Audit Trail</h1></div>
+      <p className="page-sub">Trace one event end-to-end: <span className="muted">delivery → stored request → agent decision</span></p>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Paste an event ID, check-in ID, or request ID and we replay it across the webhook delivery layer + the agent pipeline. Use this for &ldquo;the provider says they sent us X — what did we actually do with it?&rdquo; questions, compliance audits, or chasing down a specific failure. It catches things the queue can&rsquo;t — failed deliveries that never became a PA.
+      </p>
+      <div className="toolbar section-gap">
+        <div className="search" style={{ maxWidth: 420 }}>
+          <span className="muted mono" style={{ fontSize: 12 }}>trace</span>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onTrace(); }} placeholder="event_id · checkin_id · request_id" />
+        </div>
+        <button className="btn indigo" onClick={onTrace}>Trace event</button>
+      </div>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      {loading ? <div className="muted section-gap" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>Loading…</div>
+        : !t ? <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">⛓</div><h4>No trace found</h4><p>Search an event_id, checkin_id, or request_id to follow it across the pipeline.</p></div></div>
+          : (
+            <>
+              <p className="page-sub section-gap" style={{ marginTop: 18 }}>Tracing <b>{t.delivery?.checkin_id || t.preauth?.request_id || t.delivery?.event_id}</b>{traces.length > 1 ? <span className="muted"> · {traces.length} matches, showing latest</span> : null}</p>
+              <div className="timeline section-gap" style={{ maxWidth: 680, marginTop: 14 }}>
+                {nodes.map((n, i) => (
+                  <div className={`stage ${n.st}`} key={i}>
+                    <div className="node">{n.st === 'pass' ? '✓' : n.st === 'fail' ? '✕' : (i + 1)}</div>
+                    <div className="s-top"><span className="s-name">{n.name}</span><span className="s-stat">{n.st}</span>{n.time ? <span className="s-time">{n.time}</span> : null}</div>
+                    <p className="s-sum">{n.sum}</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+    </>
+  );
+}
+
+/* ============================================================
+   Team (wired to /auth/team, /auth/invite-member, /auth/team-member)
+   ============================================================ */
+function TeamView({ data, loading, error, notice, isAdmin, org, inviteEmail, setInviteEmail, inviting, onInvite, onRemove }) {
+  const members = (data && data.members) || [];
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Team</h1></div>
+      <p className="page-sub">Members & pending invites for <b>{org}</b></p>
+      {isAdmin ? (
+        <div className="toolbar section-gap" data-admin-only="">
+          <div className="search" style={{ maxWidth: 360 }}><span className="muted mono" style={{ fontSize: 12 }}>invite</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onInvite(); }} placeholder="teammate@org.com" /></div>
+          <button className="btn indigo" onClick={onInvite} disabled={inviting}>{inviting ? 'Sending…' : 'Send invite'}</button>
+        </div>
+      ) : (
+        <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — member role cannot invite or remove teammates.</div>
+      )}
+      {notice ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {notice}</div> : null}
+      {error ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      <div className="queue section-gap" style={{ marginTop: 18 }}>
+        <div className="qhead" style={{ gridTemplateColumns: '1.4fr 1.6fr 100px 110px 90px' }}><span>Member</span><span>Email</span><span>Role</span><span>Status</span><span /></div>
+        {members.map((m) => (
+          <div className="qrow" key={m.email} style={{ gridTemplateColumns: '1.4fr 1.6fr 100px 110px 90px', cursor: 'default' }}>
+            <div className="pt"><span className="ava" style={{ display: 'inline-grid', width: 22, height: 22, borderRadius: '50%', background: 'var(--indigo)', color: '#fff', placeItems: 'center', fontFamily: 'var(--mono)', fontSize: 10, marginRight: 8, verticalAlign: 'middle' }}>{(m.name || m.email).split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase()}</span>{m.name}</div>
+            <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>{m.email}</div>
+            <div><span className="plan-tag">{m.role}</span></div>
+            <div><span className={`pill ${m.status === 'active' ? 'approve' : 'escalate'}`}><span className="dot" />{m.status}</span></div>
+            <div style={{ textAlign: 'right' }} data-admin-only="">{isAdmin && m.can_delete ? <button className="btn sm" onClick={() => onRemove(m.email)}>Remove</button> : null}</div>
+          </div>
+        ))}
+        {!members.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">⊞</div><h4>{loading ? 'Loading…' : 'No members yet'}</h4></div>}
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   API Key (wired to /auth/api-key + generate/revoke)
+   ============================================================ */
+function ApiKeyView({ data, error, notice, isAdmin, org, revealed, busy, onGenerate, onRevoke, keyName, setKeyName }) {
+  const keys = (data && data.keys) || [];
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">API Keys</h1></div>
+      <p className="page-sub">Credentials used to authenticate webhook deliveries · <b>{org}</b></p>
+      {!isAdmin ? <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — only admins can generate or revoke keys.</div> : null}
+      {notice ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {notice}</div> : null}
+      {error ? <div className="ro-banner section-gap" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+
+      {isAdmin ? (
+        <div className="metric section-gap" data-admin-only="" style={{ maxWidth: 760, marginTop: 20 }}>
+          <h3>Generate a new key</h3>
+          <p className="desc">Name it so you can tell keys apart (e.g. "Aman prod webhook", "Staging test"). The full key is shown once, on generation.</p>
+          <form onSubmit={(e) => { e.preventDefault(); onGenerate(); }} style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <div className="search" style={{ flex: 1 }}>
+              <input value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="Key name (optional)" />
+            </div>
+            <button className="btn indigo" type="submit" disabled={busy}>{busy ? 'Generating…' : 'Generate key'}</button>
+          </form>
+          {revealed ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, background: 'var(--ok-bg)', border: '1px solid var(--ok-line)', borderRadius: 9, padding: '13px 16px', fontFamily: 'var(--mono)', fontSize: 13 }}>
+                <span style={{ flex: 1, wordBreak: 'break-all' }}>{revealed}</span>
+                <span className="pill approve"><span className="dot" />new</span>
+              </div>
+              <div className="muted mono" style={{ fontSize: 11.5, marginTop: 8 }}>Copy this now — the full key will not be shown again.</div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="section-gap" style={{ marginTop: 30 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Active keys</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>{keys.length} key{keys.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="queue">
+          <div className="qhead" style={{ gridTemplateColumns: '1.4fr 140px 130px 130px 100px' }}>
+            <span>Name</span><span data-tip="Only the first 4 and last 4 characters are stored as a display hint. The full key is shown once at generation — copy it then." data-tip-align="left">Key</span><span>Created</span><span data-tip="Most recent successful webhook authentication with this key. ‘never’ means the HMO hasn’t sent a webhook with it yet." data-tip-align="left">Last used</span><span style={{ textAlign: 'right' }}>Action</span>
+          </div>
+          {keys.map((k) => (
+            <div className="qrow" key={k.id} style={{ gridTemplateColumns: '1.4fr 140px 130px 130px 100px', cursor: 'default' }}>
+              <div className="pt"><b>{k.name}</b></div>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>{k.masked_api_key}</div>
+              <div className="muted mono" style={{ fontSize: 12 }}>{k.created_at ? timeAgo(k.created_at) : '—'}</div>
+              <div className="muted mono" style={{ fontSize: 12 }}>{k.last_used_at ? timeAgo(k.last_used_at) : 'never'}</div>
+              <div style={{ textAlign: 'right' }} data-admin-only="">
+                {isAdmin ? <button className="btn sm" onClick={() => onRevoke && onRevoke(k.id, k.name)} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} disabled={busy}>Revoke</button> : null}
+              </div>
+            </div>
+          ))}
+          {!keys.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">🔑</div><h4>No keys yet</h4><p>{isAdmin ? 'Generate one above to authenticate webhook deliveries from this org.' : 'An admin can generate API keys for this org.'}</p></div>}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   Onboarding (SaaSPro platform admin: cross-org platform view)
+   ============================================================ */
+function OnboardingView({ data, loading, error, isPlatformAdmin, orgName, setOrgName, adminEmail, setAdminEmail, onCreate, creating, created, createError, onResetCreate, onSelectOrg, onRenameOrg, onToggleActive }) {
+  if (!isPlatformAdmin) {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Onboarding</h1></div>
+        <p className="page-sub">Platform-only view.</p>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔒</div><h4>Not available</h4><p>Only admins of the SaaSPro platform org can onboard new client organizations.</p></div></div>
+      </>
+    );
+  }
+  const orgs = (data && data.orgs) || [];
+  const totalMembers = orgs.reduce((a, o) => a + (o.members || 0), 0);
+  const totalRequests = orgs.reduce((a, o) => a + (o.requests || 0), 0);
+  const totalPending = orgs.reduce((a, o) => a + (o.pending_invites || 0), 0);
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">Onboarding</h1></div>
+      <p className="page-sub">Manage client organizations · <span className="muted">platform-only view</span></p>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Spin up a new HMO client, invite their first admin, or drill into any existing client&rsquo;s queue read-only. This page is visible only to admins of the SaaSPro org — client admins manage their own org&rsquo;s team + keys from their respective Team and API Key pages.
+      </p>
+      <div className="kpi-strip section-gap" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <KpiTile label="Client organizations" val={orgs.length.toLocaleString()} sub={`${totalPending} pending invites`} />
+        <KpiTile label="Total members" val={totalMembers.toLocaleString()} sub="across all orgs" />
+        <KpiTile label="Total PA requests" val={totalRequests.toLocaleString()} sub="all-time" />
+      </div>
+      <div className="grid-2 section-gap">
+        <div className="metric">
+          <h3>Create a client organization</h3>
+          <p className="desc">Spin up a new org and invite its first admin. They receive a registration link (email if Resend is configured).</p>
+          <form onSubmit={(e) => { e.preventDefault(); onCreate(); }} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              Organization name
+              <div className="search"><input value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="Aman HMO" required /></div>
+            </label>
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              First admin email
+              <div className="search"><input type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="admin@client.com" required /></div>
+            </label>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn indigo" type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create org + invite admin'}</button>
+              {created ? <button className="btn" type="button" onClick={onResetCreate}>New</button> : null}
+            </div>
+          </form>
+          {createError ? <div className="ro-banner" style={{ display: 'flex', marginTop: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {createError}</div> : null}
+          {created ? (
+            <div className="ro-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 14, background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="led" style={{ background: 'var(--ok)' }} />Created <b style={{ marginLeft: 4 }}>{created.org.name}</b>{created.invite.email_sent ? '. Invite emailed to ' : '. Email not sent — share this invite link with '}<b style={{ marginLeft: 4 }}>{created.invite.email}</b>:</div>
+              <div className="codeblock" style={{ width: '100%', fontSize: 11.5, padding: '10px 12px', wordBreak: 'break-all' }}>{created.invite.invite_link}</div>
+            </div>
+          ) : null}
+        </div>
+        <div className="metric">
+          <h3>How this works</h3>
+          <p className="desc">Members and admins live inside a single client org. SaaSPro platform admins (admins of the SAASPRO org) can spin up new client orgs and invite their first admin from here — no CLI required.</p>
+          <ol style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.7, marginTop: 12, paddingLeft: 18 }}>
+            <li>Create the org and the first admin's invite.</li>
+            <li>The admin opens the link, sets a password, signs in.</li>
+            <li>They invite their team and generate the webhook API key.</li>
+          </ol>
+        </div>
+      </div>
+      <div className="section-gap" style={{ marginTop: 30 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Client organizations</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>{orgs.length} org{orgs.length === 1 ? '' : 's'}</span>
+        </div>
+        {error ? <div className="ro-banner" style={{ display: 'flex', background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)', marginBottom: 14 }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+        <div className="queue">
+          <div className="qhead" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px 200px' }}>
+            <span>Organization</span><span>Members</span><span>Pending</span><span>API keys</span><span>Requests</span><span>Last activity</span><span style={{ textAlign: 'right' }}>Actions</span>
+          </div>
+          {orgs.map((o) => (
+            <div className="qrow" key={o.id} onClick={() => onSelectOrg && onSelectOrg(o)} title="View this org's intake" style={{ gridTemplateColumns: '1.4fr 100px 110px 90px 100px 120px 200px', cursor: onSelectOrg ? 'pointer' : 'default', opacity: o.is_active ? 1 : 0.55 }}>
+              <div className="pt"><b>{o.name}</b><small>{o.is_active ? 'active' : 'disabled'}</small></div>
+              <div className="mono" style={{ fontSize: 12 }}>{(o.members || 0).toLocaleString()}</div>
+              <div>{o.pending_invites > 0 ? <span className="pill escalate"><span className="dot" />{o.pending_invites}</span> : <span className="muted mono" style={{ fontSize: 12 }}>—</span>}</div>
+              <div className="mono" style={{ fontSize: 12 }}>{(o.api_keys || 0).toLocaleString()}</div>
+              <div className="mono" style={{ fontSize: 12 }}>{(o.requests || 0).toLocaleString()}</div>
+              <div className="muted mono" style={{ fontSize: 12 }}>{o.last_activity ? timeAgo(o.last_activity) : 'never'}</div>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button className="btn sm" onClick={(e) => { e.stopPropagation(); onRenameOrg && onRenameOrg(o); }} title="Rename">Rename</button>
+                {o.name.toUpperCase() !== 'SAASPRO' ? (
+                  o.is_active
+                    ? <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, false); }} style={{ color: 'var(--bad)', borderColor: 'var(--bad-line)' }} data-tip="Inactive orgs can’t accept webhooks or have their members log in. History is preserved." data-tip-pos="below" data-tip-align="right">Deactivate</button>
+                    : <button className="btn sm" onClick={(e) => { e.stopPropagation(); onToggleActive && onToggleActive(o, true); }} title="Reactivate">Reactivate</button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+          {!orgs.length && <div className="stub-empty" style={{ padding: '40px 24px' }}><div className="ph">⊞</div><h4>{loading ? 'Loading…' : 'No organizations yet'}</h4></div>}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   Stub module views (IA placeholders — not yet wired to data)
+   ============================================================ */
+function StubChannel({ title, sub, cols, note }) {
+  return (
+    <>
+      <div className="stub-head"><h1 className="page-title">{title}</h1><span className="stub-badge">Module preview</span></div>
+      <p className="page-sub">{sub}</p>
+      <div className="stub-table">
+        <div className="sth" style={{ gridTemplateColumns: `repeat(${cols.length},1fr)` }}>{cols.map((c) => <span key={c}>{c}</span>)}</div>
+        <div className="stub-empty"><div className="ph">▦</div><h4>No items yet</h4><p>{note}</p></div>
+      </div>
+    </>
+  );
+}
+function StubView({ id, session }) {
+  const org = session.org_name || 'your organization';
+  if (id === 'health') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Integration Health</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Inbound webhook deliveries from <b>{org}</b> · connect to <span className="muted">/auth/webhook-delivery-logs</span></p>
+        <div className="stub-table"><div className="stub-empty"><div className="ph">◴</div><h4>Delivery health view</h4><p>The backend already exposes delivery summary + per-attempt logs (auth, payload validity, duplicates, latency). This view will surface them.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'audit') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Audit Trail</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Trace one event end-to-end: <span className="muted">delivery → stored request → agent decision</span></p>
+        <div className="stub-table"><div className="stub-empty"><div className="ph">⛓</div><h4>End-to-end trace</h4><p>Backed by /auth/webhook-audit-trail — search an event_id, checkin_id, or request_id to follow it across the pipeline.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'team') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">Team</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Members & pending invites for <b>{org}</b></p>
+        <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — member role cannot invite or remove teammates.</div>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">⊞</div><h4>Team management</h4><p>Backed by /auth/team, /auth/invite-member, /auth/team-member — list members, invite by email, remove.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'apikey') {
+    return (
+      <>
+        <div className="stub-head"><h1 className="page-title">API Key</h1><span className="stub-badge">Not yet wired</span></div>
+        <p className="page-sub">Credential the HMO uses to authenticate webhook deliveries · <b>{org}</b></p>
+        <div className="ro-banner section-gap" style={{ marginTop: 18 }}><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — only admins can generate or revoke keys.</div>
+        <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔑</div><h4>API key management</h4><p>Backed by /auth/api-key (generate / show-once / revoke). Used to onboard the client's webhook integration.</p></div></div>
+      </>
+    );
+  }
+  if (id === 'eligibility') {
+    return <StubChannel title="Eligibility Checks" sub="Provider eligibility requests arriving via Email & WhatsApp" cols={['Source', 'Provider', 'Enrollee ID', 'Plan', 'Status', 'Received']} note="Eligibility intake is being wired up. Channel connectors (Email, WhatsApp) will land here as a live operational queue." />;
+  }
+  if (id === 'support') {
+    return <StubChannel title="Support" sub="Support conversations across Email, WhatsApp & Calls" cols={['Channel', 'Requester', 'Intent', 'Assigned to', 'Status', 'Last activity']} note="Support intake is being wired up. Conversations across channels will be triaged and assigned here." />;
+  }
+  return null;
+}
+
+/* ============================================================
+   Icons
+   ============================================================ */
+const IconSearch = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--ink-3)' }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+);
+const IconCal = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></svg>
+);
+const IconCopy = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
+);
+const IconExport = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>
+);
+const IconRefresh = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+);
+
+/* ============================================================
+   Login
+   ============================================================ */
+function Login({ email, setEmail, password, setPassword, onSubmit, error, loading }) {
+  return (
+    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-2)', padding: 24 }}>
+      <form onSubmit={onSubmit} style={{ width: 'min(380px, 100%)', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-card)', padding: '34px 30px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/saaspro-mark.png" alt="SaaSPro Labs" style={{ width: 40, height: 40, borderRadius: 9, display: 'block' }} />
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Saaspro Labs</p>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, margin: '2px 0 0' }}>Pre-Auth Operations</h1>
+          </div>
+        </div>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Email
+          <div className="search"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@example.com" autoComplete="email" required /></div>
+        </label>
+        <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          Password
+          <div className="search"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" autoComplete="current-password" required /></div>
+        </label>
+        {error ? <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--bad-ink)', background: 'var(--bad-bg)', border: '1px solid var(--bad-line)', borderRadius: 8, padding: '8px 12px' }}>{error}</div> : null}
+        <button className="btn indigo" type="submit" disabled={loading} style={{ justifyContent: 'center' }}>{loading ? 'Signing in…' : 'Sign in'}</button>
+        <span className="eyebrow" style={{ textAlign: 'center' }}>Backend: {API_BASE_URL}</span>
+      </form>
+    </main>
+  );
+}
+
+/* ============================================================
+   App
+   ============================================================ */
 export default function App() {
+  return (
+    <ToastHost>
+      <AppInner />
+    </ToastHost>
+  );
+}
+
+function AppInner() {
   const [session, setSession] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : null;
+    const s = localStorage.getItem(STORAGE_KEY);
+    return s ? JSON.parse(s) : null;
   });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -327,15 +1866,93 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [activeNav, setActiveNav] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('nav') || 'intake'; }
+    catch { return 'intake'; }
+  });
+  // Patients page state — list + detail share this single view, switched by
+  // ?patient= in the URL.
+  const [patients, setPatients] = useState(null);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsError, setPatientsError] = useState('');
+  const [patientsQuery, setPatientsQuery] = useState('');
+  const [patientsSort, setPatientsSort] = useState('latest');
+  const [patientsOutcome, setPatientsOutcome] = useState('all');
+  const [patientsPage, setPatientsPage] = useState(1);
+  const [selectedPatientId, setSelectedPatientId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('patient') || ''; }
+    catch { return ''; }
+  });
+  const [patientDetail, setPatientDetail] = useState(null); // { patient_id, requests }
+  const [patientDetailLoading, setPatientDetailLoading] = useState(false);
+  const [patientDetailError, setPatientDetailError] = useState('');
+  const [openedPaIds, setOpenedPaIds] = useState(() => new Set()); // which PA rows in detail view are expanded
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [role, setRole] = useState('admin');
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('saaspro-sidebar-collapsed') === '1'; } catch { return false; } });
+  const toggleSidebar = () => setCollapsed((c) => { const n = !c; try { localStorage.setItem('saaspro-sidebar-collapsed', n ? '1' : '0'); } catch (e) { /* ignore */ } return n; });
+  const [lastLoaded, setLastLoaded] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthError, setHealthError] = useState('');
+  const [audit, setAudit] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [auditQuery, setAuditQuery] = useState('');
+  const [team, setTeam] = useState(null);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState('');
+  const [teamNotice, setTeamNotice] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [apikey, setApikey] = useState(null);
+  const [apikeyError, setApikeyError] = useState('');
+  const [apikeyNotice, setApikeyNotice] = useState('');
+  const [apikeyBusy, setApikeyBusy] = useState(false);
+  const [revealedKey, setRevealedKey] = useState('');
+  const [keyName, setKeyName] = useState('');
+  const [orgs, setOrgs] = useState(null);
+  const [orgsLoading, setOrgsLoading] = useState(false);
+  const [orgsError, setOrgsError] = useState('');
+  const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgAdminEmail, setNewOrgAdminEmail] = useState('');
+  const [creatingOrg, setCreatingOrg] = useState(false);
+  const [createdOrg, setCreatedOrg] = useState(null);
+  const [createOrgError, setCreateOrgError] = useState('');
+  const [viewOrgId, setViewOrgId] = useState(null); // { id, name } when a platform admin is drilled into another org
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 25;
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [activeTab, setActiveTab] = useState('preauth');
-  const [requestEvents, setRequestEvents] = useState([]);
-  const [eventsLoading, setEventsLoading] = useState(false);
-  const [eventsError, setEventsError] = useState('');
+  const [planFilter, setPlanFilter] = useState('all');
+  // Debounced copy of the search box so we don't fire one fetch per keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  // Full patient history for the currently-open drawer. Fetched on demand so
+  // siblings show across pages, not just within the visible 25.
+  const [patientHistory, setPatientHistory] = useState({ patient_id: null, requests: [] });
+  // PA event timeline for the currently-open drawer (origin/main feature).
+  // Fetched from /auth/preauth-events when the drawer opens.
+  const [paEvents, setPaEvents] = useState({ checkin_id: null, events: [], loading: false, error: '' });
+
+  useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
+  useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
+  // Platform-admin drill-in is view-only. When the active org context differs from
+  // the user's own org, hide write actions and surface a banner so they can't
+  // accidentally mutate the client's data through their own-org write endpoints.
+  useEffect(() => {
+    const drilled = !!(viewOrgId && session && viewOrgId.name !== session.org_name);
+    document.body.classList.toggle('drill-in-view', drilled);
+    return () => document.body.classList.remove('drill-in-view');
+  }, [viewOrgId, session]);
+  useEffect(() => { if (session) setRole(session.role || 'admin'); }, [session]);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   async function apiRequest(path, options = {}) {
     const headers = {
@@ -343,21 +1960,13 @@ export default function App() {
       ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
       ...(options.headers || {}),
     };
-
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...options,
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
-
+    const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, body: options.body ? JSON.stringify(options.body) : undefined });
     const text = await response.text();
     const data = text ? JSON.parse(text) : {};
-
     if (!response.ok) {
       const detail = data?.detail || data?.message || response.statusText;
       throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
     }
-
     return data;
   }
 
@@ -365,20 +1974,12 @@ export default function App() {
     event.preventDefault();
     setLoginError('');
     setLoginLoading(true);
-
     try {
-      const data = await apiRequest('/auth/login', {
-        method: 'POST',
-        body: { email, password },
-      });
-      const nextSession = {
-        token: data.token,
-        role: data.role,
-        name: data.name,
-        org_name: data.org_name,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSession));
-      setSession(nextSession);
+      const data = await apiRequest('/auth/login', { method: 'POST', body: { email, password } });
+      const next = { token: data.token, role: data.role, name: data.name, org_name: data.org_name };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setSession(next);
+      setRole(next.role || 'admin');
       setEmail('');
       setPassword('');
     } catch (err) {
@@ -392,33 +1993,265 @@ export default function App() {
     if (!session?.token) return;
     if (!silent) setLoading(true);
     setError('');
-
     try {
-      const params = new URLSearchParams();
-      if (dateFrom) params.set('date_from', dateFrom);
-      if (dateTo) params.set('date_to', dateTo);
-      const queryString = params.toString();
-      const data = await apiRequest(`/auth/preauth-dashboard${queryString ? `?${queryString}` : ''}`);
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      if (dateFrom) qs.set('date_from', dateFrom);
+      if (dateTo) qs.set('date_to', dateTo);
+      if (planFilter && planFilter !== 'all') qs.set('plan', planFilter);
+      if (debouncedQuery && debouncedQuery.trim()) qs.set('q', debouncedQuery.trim());
+      qs.set('page', String(currentPage));
+      qs.set('page_size', String(PAGE_SIZE));
+      const data = await apiRequest('/auth/preauth-dashboard?' + qs.toString());
       setDashboard(data);
-      const requests = data?.requests || [];
-      setSelectedId((current) => {
-        if (current && requests.some((request) => request.request_id === current)) return current;
-        return requests[0]?.request_id || '';
-      });
+      setLastLoaded(Date.now());
     } catch (err) {
       if (/token expired/i.test(err.message || '')) {
         signOut();
         setLoginError('Session expired. Please sign in again.');
         return;
       }
-
-      setError(
-        err.message === 'Not Found'
-          ? 'Dashboard endpoint is not available yet. Restart the backend so the new route is loaded.'
-          : err.message || 'Could not load dashboard'
-      );
+      setError(err.message || 'Could not load dashboard');
     } finally {
       if (!silent) setLoading(false);
+    }
+  }
+
+  async function loadHealth() {
+    if (!session?.token) return;
+    setHealthLoading(true);
+    setHealthError('');
+    try {
+      const data = await apiRequest('/auth/webhook-delivery-logs');
+      setHealth(data);
+    } catch (err) {
+      setHealthError(err.message || 'Could not load delivery logs');
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
+  async function loadAudit(q) {
+    if (!session?.token) return;
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const params = new URLSearchParams();
+      const v = (q ?? auditQuery).trim();
+      if (v) { if (v.includes('/')) params.set('checkin_id', v); else params.set('request_id', v); }
+      const data = await apiRequest(`/auth/webhook-audit-trail?${params.toString()}`);
+      setAudit(data);
+    } catch (err) { setAuditError(err.message || 'Could not load audit trail'); }
+    finally { setAuditLoading(false); }
+  }
+  async function loadTeam() {
+    if (!session?.token) return;
+    setTeamLoading(true);
+    setTeamError('');
+    try { setTeam(await apiRequest('/auth/team')); }
+    catch (err) { setTeamError(err.message || 'Could not load team'); }
+    finally { setTeamLoading(false); }
+  }
+  async function inviteMember() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviting(true); setTeamError(''); setTeamNotice('');
+    try {
+      const res = await apiRequest('/auth/invite-member', { method: 'POST', body: { email } });
+      setTeamNotice(res.message || `Invite created for ${email}`);
+      setInviteEmail('');
+      await loadTeam();
+    } catch (err) { setTeamError(err.message || 'Invite failed'); }
+    finally { setInviting(false); }
+  }
+  async function removeMember(email) {
+    setTeamError(''); setTeamNotice('');
+    try {
+      const res = await apiRequest(`/auth/team-member/${encodeURIComponent(email)}`, { method: 'DELETE' });
+      setTeamNotice(res.message || `Removed ${email}`);
+      await loadTeam();
+    } catch (err) { setTeamError(err.message || 'Remove failed'); }
+  }
+  async function loadApiKey() {
+    if (!session?.token) return;
+    setApikeyError('');
+    try { setApikey(await apiRequest('/auth/api-key')); }
+    catch (err) { setApikeyError(err.message || 'Could not load API key'); }
+  }
+  async function generateKey() {
+    setApikeyBusy(true); setApikeyError(''); setApikeyNotice('');
+    try {
+      const body = { name: (keyName || '').trim() || null };
+      const res = await apiRequest('/auth/api-key/generate', { method: 'POST', body });
+      setRevealedKey(res.api_key || '');
+      setApikeyNotice(`Key "${res.name || 'new'}" generated`);
+      setKeyName('');
+      await loadApiKey();
+    } catch (err) { setApikeyError(err.message || 'Generate failed'); }
+    finally { setApikeyBusy(false); }
+  }
+  async function revokeKey(keyId, keyDisplayName) {
+    if (!window.confirm(`Revoke key "${keyDisplayName || 'this key'}"? This cannot be undone.`)) return;
+    setApikeyBusy(true); setApikeyError(''); setApikeyNotice('');
+    try {
+      await apiRequest(`/auth/api-key/${keyId}`, { method: 'DELETE' });
+      setApikeyNotice(`Key "${keyDisplayName || 'key'}" revoked`);
+      await loadApiKey();
+    } catch (err) { setApikeyError(err.message || 'Revoke failed'); }
+    finally { setApikeyBusy(false); }
+  }
+
+  async function loadOrgs() {
+    if (!session?.token) return;
+    setOrgsLoading(true);
+    setOrgsError('');
+    try { setOrgs(await apiRequest('/auth/onboarding/orgs')); }
+    catch (err) { setOrgsError(err.message || 'Could not load organizations'); }
+    finally { setOrgsLoading(false); }
+  }
+  async function loadPatients() {
+    if (!session?.token) return;
+    setPatientsLoading(true);
+    setPatientsError('');
+    try {
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      if (patientsQuery.trim()) qs.set('q', patientsQuery.trim());
+      if (patientsSort && patientsSort !== 'latest') qs.set('sort', patientsSort);
+      if (patientsOutcome && patientsOutcome !== 'all') qs.set('outcome', patientsOutcome);
+      qs.set('page', String(patientsPage));
+      qs.set('page_size', '25');
+      setPatients(await apiRequest('/auth/patients?' + qs.toString()));
+    } catch (err) { setPatientsError(err.message || 'Could not load patients'); }
+    finally { setPatientsLoading(false); }
+  }
+  async function loadPatientDetail(pid) {
+    if (!session?.token || !pid) return;
+    setPatientDetailLoading(true);
+    setPatientDetailError('');
+    try {
+      const qs = new URLSearchParams();
+      qs.set('patient_id', pid);
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      const data = await apiRequest('/auth/patient-history?' + qs.toString());
+      const requests = data.requests || [];
+      setPatientDetail({ patient_id: data.patient_id || pid, requests });
+      // Default-expand every PA row so the operator sees all decisions at once
+      // (their explicit ask). They can collapse individual rows from there.
+      setOpenedPaIds(new Set(requests.map((r) => r.request_id)));
+    } catch (err) {
+      setPatientDetail({ patient_id: pid, requests: [] });
+      setPatientDetailError(err.message || 'Could not load patient');
+    } finally { setPatientDetailLoading(false); }
+  }
+  async function downloadPatientPdf() {
+    if (!patientDetail || !patientDetail.patient_id) return;
+    // 1. Record the export to the server-side audit trail (non-blocking — if
+    //    it fails we still let the operator print, but they'll see a toast).
+    try {
+      await apiRequest('/auth/audit/log-event', {
+        method: 'POST',
+        body: {
+          event_type: 'pdf_download',
+          target_kind: 'patient',
+          target_id: patientDetail.patient_id,
+          metadata: { pa_count: (patientDetail.requests || []).length },
+        },
+      });
+    } catch (_e) { /* non-blocking */ }
+    // 2. Make sure every PA row is expanded so the printout includes all detail.
+    setOpenedPaIds(new Set((patientDetail.requests || []).map((r) => r.request_id)));
+    // 3. Set document.title to drive the "Save as PDF" filename. Browsers use
+    //    document.title as the suggested name in the print → save dialog. We
+    //    want PatientName_OrgName — and the org is the *patient's* org (the
+    //    HMO the PAs belong to), never SaaSPro even when a platform admin is
+    //    drilled in.
+    // Take the first request that actually has a patient_name. Some rows
+    // come from the queue without the enrollee name populated, so we don't
+    // want to fall back to the raw patient_id if there's a real name elsewhere
+    // in the history.
+    const namedReq = (patientDetail.requests || []).find((r) => r && r.patient_name && r.patient_name.trim());
+    const rawName = (namedReq && namedReq.patient_name) || patientDetail.patient_id || 'patient';
+    // The patient belongs to whichever org the platform admin is drilled
+    // into; if no drill-in then it's the operator's own org. Either way it's
+    // the patient's HMO, not the platform.
+    const rawOrg = viewOrgId?.name || session.org_name || 'org';
+    const sanitize = (s) => String(s)
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')   // strip accents
+      .replace(/[^A-Za-z0-9 _-]+/g, '')                    // drop punctuation
+      .trim().replace(/\s+/g, '_')                          // spaces → _
+      .slice(0, 80) || 'untitled';
+    const filename = `${sanitize(rawName)}_${sanitize(rawOrg)}`;
+    const originalTitle = document.title;
+    document.title = filename;
+    const restoreTitle = () => {
+      document.title = originalTitle;
+      window.removeEventListener('afterprint', restoreTitle);
+    };
+    window.addEventListener('afterprint', restoreTitle);
+    // Belt-and-braces: also restore after a delay in case afterprint never
+    // fires (some browsers / cancelled dialogs swallow it).
+    setTimeout(restoreTitle, 30_000);
+    // 4. Wait for the render to settle, then trigger the browser print dialog.
+    await new Promise((r) => setTimeout(r, 200));
+    window.print();
+  }
+  function navigateTo({ nav, patient_id }) {
+    const params = new URLSearchParams(window.location.search);
+    if (nav != null) {
+      if (nav === 'intake') params.delete('nav'); else params.set('nav', nav);
+    }
+    if (patient_id != null) {
+      if (patient_id) params.set('patient', patient_id); else params.delete('patient');
+    }
+    const qs = params.toString();
+    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.pushState({}, '', next);
+    }
+    if (nav != null) setActiveNav(nav);
+    if (patient_id != null) {
+      setSelectedPatientId(patient_id);
+      setOpenedPaIds(new Set()); // reset expanded rows when switching patients
+    }
+  }
+  async function createOrg() {
+    const name = newOrgName.trim();
+    const email = newOrgAdminEmail.trim();
+    if (!name || !email) return;
+    setCreatingOrg(true);
+    setCreateOrgError('');
+    setCreatedOrg(null);
+    try {
+      const data = await apiRequest('/auth/onboarding/create-org', { method: 'POST', body: { org_name: name, admin_email: email } });
+      setCreatedOrg(data);
+      setNewOrgName('');
+      setNewOrgAdminEmail('');
+      await loadOrgs();
+    } catch (err) { setCreateOrgError(err.message || 'Create failed'); }
+    finally { setCreatingOrg(false); }
+  }
+  function resetCreateOrg() { setCreatedOrg(null); setCreateOrgError(''); }
+  async function renameOrg(o) {
+    const next = window.prompt(`Rename "${o.name}" to:`, o.name);
+    if (next === null) return;
+    const name = next.trim();
+    if (!name || name === o.name) return;
+    try {
+      await apiRequest(`/auth/onboarding/orgs/${o.id}`, { method: 'PATCH', body: { name } });
+      await loadOrgs();
+    } catch (err) {
+      window.alert('Rename failed: ' + (err.message || 'unknown error'));
+    }
+  }
+  async function setOrgActive(o, active) {
+    const verb = active ? 'Reactivate' : 'Deactivate';
+    if (!window.confirm(`${verb} "${o.name}"?`)) return;
+    try {
+      await apiRequest(`/auth/onboarding/orgs/${o.id}`, { method: 'PATCH', body: { is_active: active } });
+      await loadOrgs();
+    } catch (err) {
+      window.alert(`${verb} failed: ` + (err.message || 'unknown error'));
     }
   }
 
@@ -427,663 +2260,497 @@ export default function App() {
     setSession(null);
     setDashboard(null);
     setSelectedId('');
+    setDrawerOpen(false);
+    setViewOrgId(null);
+  }
+  // URL ⇄ viewOrgId helpers. The drill-in target lives in `?org=N` so a
+  // hard reload, copy/paste URL, or browser back/forward restores it.
+  function urlSetOrg(orgId) {
+    const params = new URLSearchParams(window.location.search);
+    if (orgId == null) params.delete('org'); else params.set('org', String(orgId));
+    const qs = params.toString();
+    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.pushState({}, '', next);
+    }
+  }
+  function enterDrillIn(org) {
+    setViewOrgId({ id: org.id, name: org.name });
+    setActiveNav('intake');
+    setSelectedId('');
+    setDrawerOpen(false);
+    setDashboard(null);
+    urlSetOrg(org.id);
+  }
+  function exitViewAs() {
+    setViewOrgId(null);
+    setActiveNav('onboarding');
+    setSelectedId('');
+    setDrawerOpen(false);
+    setDashboard(null);
+    urlSetOrg(null);
   }
 
+  // After login: parse ?org= and restore drill-in. Non-platform-admins ignore it.
+  // The org name is resolved from the loaded orgs list, or shows '…' until
+  // the list lands. Also fires loadOrgs if the list isn't loaded yet.
   useEffect(() => {
-    if (session?.token) {
-      loadDashboard();
+    if (!session?.token) return;
+    const isSuper = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+    if (!isSuper) {
+      if (viewOrgId) { setViewOrgId(null); urlSetOrg(null); }
+      return;
     }
-  }, [session?.token, dateFrom, dateTo]);
+    const params = new URLSearchParams(window.location.search);
+    const want = params.get('org');
+    if (!want) {
+      if (viewOrgId) setViewOrgId(null);
+      return;
+    }
+    const wantId = Number(want);
+    if (!Number.isFinite(wantId)) return;
+    const list = (orgs && Array.isArray(orgs.orgs)) ? orgs.orgs : (Array.isArray(orgs) ? orgs : []);
+    const match = list.find((o) => o.id === wantId);
+    if (match) {
+      if (!viewOrgId || viewOrgId.id !== wantId || viewOrgId.name !== match.name) {
+        setViewOrgId({ id: wantId, name: match.name });
+      }
+    } else {
+      if (!viewOrgId || viewOrgId.id !== wantId) setViewOrgId({ id: wantId, name: '…' });
+      if (!orgs && !orgsLoading) loadOrgs();
+    }
+    // eslint-disable-next-line
+  }, [session?.token, session?.role, session?.org_name, orgs]);
+
+  // Browser back/forward: re-sync drill-in from the URL.
+  useEffect(() => {
+    if (!session?.token) return undefined;
+    const isSuper = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+    if (!isSuper) return undefined;
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      const want = params.get('org');
+      if (!want) { setViewOrgId(null); return; }
+      const wantId = Number(want);
+      if (!Number.isFinite(wantId)) return;
+      const list = (orgs && Array.isArray(orgs.orgs)) ? orgs.orgs : (Array.isArray(orgs) ? orgs : []);
+      const match = list.find((o) => o.id === wantId);
+      setViewOrgId({ id: wantId, name: match ? match.name : '…' });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line
+  }, [session?.token, session?.role, session?.org_name, orgs]);
+
+  useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter, debouncedQuery]);
+  // Debounce the search box: wait 300ms after last keystroke before fetching.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+  // When the effective search changes, jump back to page 1.
+  useEffect(() => { setCurrentPage(1); }, [debouncedQuery]);
+  useEffect(() => {
+    if (!session?.token) return undefined;
+    const t = setInterval(() => loadDashboard({ silent: true }), 15000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line
+  }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter, debouncedQuery]);
 
   useEffect(() => {
-    if (!session?.token || !autoRefresh) return undefined;
-    const timer = window.setInterval(() => loadDashboard({ silent: true }), 15000);
-    return () => window.clearInterval(timer);
-  }, [session?.token, autoRefresh, dateFrom, dateTo]);
+    if (!session?.token) return;
+    if (activeNav === 'health' && !health) loadHealth();
+    if (activeNav === 'audit' && !audit) loadAudit('');
+    if (activeNav === 'team' && !team) loadTeam();
+    if (activeNav === 'apikey' && !apikey) loadApiKey();
+    if (activeNav === 'onboarding' && !orgs) loadOrgs();
+    if (activeNav === 'patients' && !patients) loadPatients();
+    // eslint-disable-next-line
+  }, [session?.token, activeNav]);
+
+  // Refetch the patients list when the active filters change.
+  useEffect(() => {
+    if (!session?.token || activeNav !== 'patients') return;
+    loadPatients();
+    // eslint-disable-next-line
+  }, [session?.token, viewOrgId, patientsQuery, patientsSort, patientsOutcome, patientsPage]);
+
+  // Fetch the selected patient's detail when ?patient= is set.
+  useEffect(() => {
+    if (!session?.token || activeNav !== 'patients' || !selectedPatientId) {
+      if (!selectedPatientId && patientDetail) setPatientDetail(null);
+      return;
+    }
+    if (patientDetail?.patient_id === selectedPatientId) return;
+    loadPatientDetail(selectedPatientId);
+    // eslint-disable-next-line
+  }, [session?.token, activeNav, selectedPatientId, viewOrgId]);
+
+  // Browser back/forward — re-sync nav + patient from the URL.
+  useEffect(() => {
+    if (!session?.token) return undefined;
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextNav = params.get('nav') || 'intake';
+      const nextPatient = params.get('patient') || '';
+      setActiveNav(nextNav);
+      setSelectedPatientId(nextPatient);
+      if (!nextPatient) setOpenedPaIds(new Set());
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [session?.token]);
 
   const rawRequests = dashboard?.requests || [];
   const summary = dashboard?.summary || {};
-  const requests = useMemo(() => rawRequests.map(enrichRequest), [rawRequests]);
-  const todayRequests = useMemo(
-    () => requests.filter((request) => isToday(request.received_at)),
-    [requests]
-  );
-  const todaySnapshotAmount = todayRequests.reduce((sum, request) => sum + (request.requested_amount || 0), 0);
-  const todaySnapshotLineItems = todayRequests.reduce((sum, request) => sum + (request.line_item_count || 0), 0);
-  const hasDateFilter = Boolean(dateFrom || dateTo);
-  const displayedRequestCount = hasDateFilter
-    ? (toNumber(summary.unique_pa_count) ?? requests.length)
-    : (toNumber(summary.today_unique_pa_count) ?? todayRequests.length ?? summary.received_24h ?? 0);
-  const displayedPaValue = hasDateFilter
-    ? (toNumber(summary.intake_value) ?? todaySnapshotAmount)
-    : (toNumber(summary.today_intake_value) ?? todaySnapshotAmount);
-  const displayedLineItems = hasDateFilter
-    ? (toNumber(summary.added_line_items) ?? todaySnapshotLineItems)
-    : (toNumber(summary.today_added_line_items) ?? todaySnapshotLineItems);
-  const allTimePaValue = toNumber(summary.all_time_intake_value) ?? toNumber(summary.intake_value) ?? 0;
-  const avgDisplayedAmount = displayedRequestCount ? displayedPaValue / displayedRequestCount : 0;
-
-  const filteredRequests = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return requests.filter((request) => {
-      const status = normalizeStatus(request.status);
-      const matchesStatus = statusFilter === 'all' || status === statusFilter;
-      const searchable = [
-        request.request_id,
-        request.patient_id,
-        request.plan,
-        request.item_description,
-        request.facility,
-        providerLabel(request.requesting_provider),
-        request.patient_name,
-        request.decision,
-        request.status,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-
-      return matchesStatus && (!needle || searchable.includes(needle));
+  const series = dashboard?.series || [];
+  const requests = useMemo(() => rawRequests.map(mapRequest), [rawRequests]);
+  const planOptions = dashboard?.meta?.plans || [];
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return requests.filter((r) => {
+      const okS = statusFilter === 'all' || r.status === statusFilter;
+      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.decision].filter(Boolean).join(' ').toLowerCase();
+      return okS && (!q || blob.includes(q));
     });
   }, [requests, query, statusFilter]);
 
-  const selectedRequest = requests.find((request) => request.request_id === selectedId) || filteredRequests[0];
+  // Resolve `selected` from the current page first; fall back to the loaded
+  // patient history so clicking a sibling whose row sits on another page still
+  // opens the right record without forcing a queue refetch.
+  const selected = requests.find((r) => r.request_id === selectedId)
+    || (patientHistory.requests || []).find((r) => r.request_id === selectedId)
+    || null;
+  const siblings = (selected && patientHistory.patient_id === selected.patient_id)
+    ? patientHistory.requests.filter((r) => r.request_id !== selected.request_id)
+    : [];
+  const eventsForSelected = (selected && paEvents.checkin_id === (selected.display_request_id || selected.request_id))
+    ? paEvents.events : [];
 
+  // Fetch the PA event timeline for the drawer's selected request. Keyed on
+  // the check-in id (or request_id fallback) — what kalycoding's endpoint
+  // expects. Resets when the selection changes or the drawer closes.
   useEffect(() => {
-    if (!session?.token || activeTab !== 'preauth' || !selectedRequest) {
-      setRequestEvents([]);
-      setEventsError('');
-      setEventsLoading(false);
+    if (!selected) {
+      setPaEvents({ checkin_id: null, events: [], loading: false, error: '' });
       return undefined;
     }
-
+    const checkin = selected.display_request_id || selected.request_id;
+    if (paEvents.checkin_id === checkin) return undefined;
     let cancelled = false;
-
-    async function loadRequestEvents() {
-      setEventsLoading(true);
-      setEventsError('');
-
+    setPaEvents((s) => ({ ...s, loading: true, error: '' }));
+    (async () => {
       try {
-        const params = new URLSearchParams();
-        params.set('checkin_id', selectedRequest.display_request_id || selectedRequest.request_id);
-        params.set('include_payload', 'true');
-        params.set('limit', '25');
-        const data = await apiRequest(`/auth/preauth-events?${params.toString()}`);
-        if (!cancelled) {
-          const events = asArray(data?.events).sort(
-            (a, b) => (toNumber(a.event_sequence) || 0) - (toNumber(b.event_sequence) || 0)
-          );
-          setRequestEvents(events);
-        }
+        const qs = new URLSearchParams();
+        qs.set('checkin_id', checkin);
+        qs.set('include_payload', 'true');
+        qs.set('limit', '25');
+        const data = await apiRequest('/auth/preauth-events?' + qs.toString());
+        const events = asArr(data?.events).sort((a, b) => (_evtNum(a.event_sequence) || 0) - (_evtNum(b.event_sequence) || 0));
+        if (!cancelled) setPaEvents({ checkin_id: checkin, events, loading: false, error: '' });
       } catch (err) {
-        if (!cancelled) {
-          setRequestEvents([]);
-          setEventsError(err.message || 'Could not load PA event history');
-        }
-      } finally {
-        if (!cancelled) setEventsLoading(false);
+        if (!cancelled) setPaEvents({ checkin_id: checkin, events: [], loading: false, error: err?.message || 'Could not load event history' });
       }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [selected?.request_id]);
+
+  // Fetch the full PA history for the patient whose drawer is open. Skips bare
+  // 'unknown' / '—' so we don't try to lump unrelated parse-failure rows.
+  useEffect(() => {
+    const pid = selected?.patient_id || '';
+    if (!selected || !pid || pid === '—' || pid.toLowerCase() === 'unknown') {
+      setPatientHistory({ patient_id: null, requests: [] });
+      return undefined;
     }
+    if (patientHistory.patient_id === pid) return undefined; // already loaded
+    let cancelled = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        qs.set('patient_id', pid);
+        if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+        const data = await apiRequest('/auth/patient-history?' + qs.toString());
+        if (!cancelled) setPatientHistory({ patient_id: data.patient_id || pid, requests: data.requests || [] });
+      } catch (_e) {
+        if (!cancelled) setPatientHistory({ patient_id: pid, requests: [] });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [selected?.patient_id, viewOrgId]);
 
-    loadRequestEvents();
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.token, activeTab, selectedRequest?.request_id, selectedRequest?.display_request_id]);
-
-  const moduleTabs = [
-    {
-      id: 'preauth',
-      label: 'Pre-Auth Intake',
-      detail: `${displayedRequestCount || 0} ${hasDateFilter ? 'selected' : 'today'}`,
-      icon: ClipboardList,
-    },
-    {
-      id: 'eligibility',
-      label: 'Eligibility Checks',
-      detail: '0 open',
-      icon: UserCheck,
-    },
-    {
-      id: 'support',
-      label: 'Support',
-      detail: '0 open',
-      icon: Headphones,
-    },
-  ];
-
-  const activeModule = moduleTabs.find((tab) => tab.id === activeTab) || moduleTabs[0];
-
-  const metrics = [
-    { label: 'Total requests', value: summary.total || 0, icon: ClipboardList, tone: 'plain' },
-    {
-      label: hasDateFilter ? 'Selected PAs' : 'Received today',
-      value: displayedRequestCount || 0,
-      icon: Activity,
-      tone: 'info',
-    },
-    {
-      label: hasDateFilter ? 'Selected PA value' : "Today's PA value",
-      value: formatMoney(displayedPaValue),
-      icon: Banknote,
-      tone: 'money',
-    },
-    { label: 'All-time PA value', value: formatMoney(allTimePaValue), icon: Banknote, tone: 'money' },
-    { label: hasDateFilter ? 'Selected line items' : 'Line items today', value: displayedLineItems || 0, icon: FileJson, tone: 'plain' },
-    { label: 'Avg value / PA', value: formatMoney(avgDisplayedAmount), icon: Banknote, tone: 'money' },
-    {
-      label: 'Avg time / PA',
-      value: formatDuration(summary.avg_processing_seconds ? Math.round(summary.avg_processing_seconds) : null),
-      icon: Clock3,
-      tone: 'plain',
-    },
-  ];
+  function openRequest(id) { setSelectedId(id); setDrawerOpen(true); }
 
   if (!session) {
-    return (
-      <main className="loginPage">
-        <form className="loginPanel" onSubmit={handleLogin}>
-          <div className="loginMark">SL</div>
-          <div>
-            <p className="eyebrow">Saaspro Labs</p>
-            <h1>Pre-Auth Operations</h1>
-          </div>
-
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="admin@example.com"
-              autoComplete="email"
-              required
-            />
-          </label>
-
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter password"
-              autoComplete="current-password"
-              required
-            />
-          </label>
-
-          {loginError && <div className="formError">{loginError}</div>}
-
-          <button className="primaryButton" type="submit" disabled={loginLoading}>
-            {loginLoading ? 'Signing in...' : 'Sign in'}
-          </button>
-
-          <span className="apiBase">Backend: {API_BASE_URL}</span>
-        </form>
-      </main>
-    );
+    return <Login email={email} setEmail={setEmail} password={password} setPassword={setPassword} onSubmit={handleLogin} error={loginError} loading={loginLoading} />;
   }
 
+  const refreshedLabel = loading ? 'Refreshing…' : (lastLoaded ? `Refreshed ${timeAgo(new Date(lastLoaded).toISOString())}` : 'Connecting…');
+  // Platform admin = admin of the SaaSPro platform org. There's no separate
+  // role tier — this is just "admin + org is SAASPRO". An admin of any other
+  // org (e.g. AMAN) is just an admin of that org.
+  const isPlatformAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+  const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
+
+  // chart inputs from the real daily series + summary
+  const dayLabels = series.map((d) => d.day.slice(5));
+  const recvSeries = series.map((d) => d.received);
+  const latSeries = series.map((d) => d.avg_latency);
+  const valSeries = series.map((d) => d.approved_value);
+  const decided = (summary.approved || 0) + (summary.denied || 0) + (summary.escalated || 0);
+  const approvalRate = decided ? Math.round((summary.approved / decided) * 100) : 0;
+  const outcomeSplit = [
+    { k: 'Approved', v: summary.approved || 0, c: 'var(--ok)' },
+    { k: 'Denied', v: summary.denied || 0, c: 'var(--bad)' },
+    { k: 'Escalated', v: summary.escalated || 0, c: 'var(--warn)' },
+    { k: 'Pending', v: (summary.pending || 0) + (summary.processing || 0), c: 'var(--ink-4)' },
+  ];
+  const avgLatTxt = summary.avg_processing_seconds != null ? Number(summary.avg_processing_seconds).toFixed(1) : '—';
+
   return (
-    <div className="appShell">
-      <aside className="sidebar">
-        <div className="sidebarBrand">
-          <div className="brandMark">SL</div>
-          <div>
-            <p className="eyebrow">Saaspro Labs</p>
-            <h1>Operations Dashboard</h1>
-            <span>{session.org_name ? `${session.org_name} operations` : 'Insurance operations'}</span>
+    <div className={`app ${collapsed ? 'collapsed' : ''}`}>
+      <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
+      <Sidebar
+        active={activeNav}
+        onNav={(id) => {
+          // Switching to a different top-level nav drops any open drawer +
+          // patient-detail selection. Patients page keeps its own ?patient= state.
+          navigateTo({ nav: id, patient_id: id === 'patients' ? undefined : '' });
+          setDrawerOpen(false);
+          setRevealedKey('');
+          setApikeyNotice('');
+          setTeamNotice('');
+        }}
+        session={session}
+        intakeCount={summary.received_24h ?? 0}
+        collapsed={collapsed}
+        onToggleCollapse={toggleSidebar}
+        isPlatformAdmin={isPlatformAdmin}
+        onSignOut={signOut}
+      />
+
+      <main className="main">
+        {viewOrgId && viewOrgId.name !== session.org_name ? (
+          <div className="ro-banner" style={{ display: 'flex', alignItems: 'center', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
+            <span className="led" style={{ background: 'var(--indigo)' }} />
+            <span>
+              Viewing as platform admin · scoped to <b>{viewOrgId.name}</b>
+              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                Read-only drill-in — changes you make would land in <b>{session.org_name}</b>, so write actions are hidden. Switch back to manage <b>{viewOrgId.name}</b>'s team, keys or org settings via their own admin.
+              </span>
+            </span>
+            <button className="btn sm" onClick={exitViewAs} style={{ marginLeft: 'auto' }} data-tip="Returns to your own org (SaaSPro). Drops the ?org= param from the URL." data-tip-pos="below" data-tip-align="right">← Back to platform view</button>
           </div>
-        </div>
+        ) : null}
+        {activeNav === 'intake' ? (
+          <section id="view-intake">
+            <div className="ro-banner"><span className="led" style={{ background: 'var(--recv)' }} /> Read-only view — you're signed in as a member. Operational data is visible; actions are disabled.</div>
 
-        <nav className="sidebarNav" aria-label="Operations modules">
-          {moduleTabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                className={`sidebarNavItem ${activeTab === tab.id ? 'active' : ''}`}
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="sidebarNavIcon">
-                  <Icon size={18} />
-                </span>
-                <span>{tab.label}</span>
-                <small>{tab.detail}</small>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="sidebarFooter">
-          <div className="userBlock">
-            <strong>{session.name}</strong>
-            <span>{session.role}</span>
-          </div>
-          <button className="iconButton fullWidth" type="button" onClick={() => loadDashboard()} title="Refresh dashboard">
-            <RefreshCw size={17} />
-            Refresh
-          </button>
-          <button className="iconButton muted fullWidth" type="button" onClick={signOut} title="Sign out">
-            <LogOut size={17} />
-            Sign out
-          </button>
-        </div>
-      </aside>
-
-      <main className="dashboardMain">
-        {error && <div className="bannerError">{error}</div>}
-
-        <section className="moduleSummary">
-          <div>
-            <span className="smallLabel">Active module</span>
-            <h2>{activeModule.label}</h2>
-          </div>
-          <span>
-            {activeTab === 'preauth'
-              ? `${formatMoney(displayedPaValue)} ${hasDateFilter ? 'selected' : 'today'}`
-              : activeModule.detail}
-          </span>
-        </section>
-
-        {activeTab === 'preauth' && (
-          <>
-            <section className="metricsGrid" aria-label="Pre-auth metrics">
-              {metrics.map((metric) => {
-                const Icon = metric.icon;
-                return (
-                    <div className={`metricCard ${metric.tone}`} key={metric.label}>
-                      <div className="metricIcon">
-                        <Icon size={18} />
-                      </div>
-                      <span>{metric.label}</span>
-                      <strong>{metric.value}</strong>
-                    </div>
-                  );
-                })}
-            </section>
-
-            <section className="toolbar">
-              <div className="searchBox">
-                <Search size={17} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search request, patient, provider"
-                />
+            <div className="page-head">
+              <div>
+                <h1 className="page-title">Pre-Authorization</h1>
+                <p className="page-sub">
+                  <span className="cal" aria-hidden="true"><IconCal /></span>
+                  {(() => {
+                    const fmt = (iso) => {
+                      if (!iso) return null;
+                      const d = new Date(iso);
+                      return isNaN(d) ? null : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    };
+                    const dw = dashboard?.meta?.data_window || {};
+                    const haveFilter = !!(dateFrom || dateTo);
+                    const fromStr = haveFilter ? (fmt(dateFrom) || 'start') : fmt(dw.earliest);
+                    const toStr = haveFilter ? (fmt(dateTo) || 'today') : fmt(dw.latest);
+                    const periodLabel = (fromStr && toStr)
+                      ? `${fromStr} → ${toStr}`
+                      : (fromStr || toStr || 'No data yet');
+                    return (
+                      <>
+                        <span data-tip="Earliest and latest received_at of PAs in this org. Active filters override this window.">{periodLabel}</span>
+                        {haveFilter ? <span className="muted" style={{ marginLeft: 6 }} data-tip="A toolbar date filter is active. Clear it to see the full data window.">(filtered)</span> : null}
+                        <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
+                        <span data-tip="Auto-refreshes every 15s.">Live</span> · {summary.total ?? requests.length} requests
+                      </>
+                    );
+                  })()}
+                </p>
               </div>
-              <label className="selectControl">
-                <Filter size={16} />
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                  <option value="all">All statuses</option>
-                  <option value="pending">Pending</option>
-                  <option value="processing">Processing</option>
-                  <option value="approve">Approved</option>
-                  <option value="deny">Denied</option>
-                  <option value="escalate">Escalated</option>
-                  <option value="error">Errors</option>
-                </select>
-              </label>
-              <label className="dateControl">
-                <CalendarDays size={16} />
-                <span>From</span>
-                <input
-                  type="date"
-                  value={dateFrom}
-                  max={dateTo || undefined}
-                  onChange={(event) => setDateFrom(event.target.value)}
-                />
-              </label>
-              <label className="dateControl">
-                <CalendarDays size={16} />
-                <span>To</span>
-                <input
-                  type="date"
-                  value={dateTo}
-                  min={dateFrom || undefined}
-                  onChange={(event) => setDateTo(event.target.value)}
-                />
-              </label>
-              {(dateFrom || dateTo) && (
-                <button
-                  className="iconButton compact"
-                  type="button"
-                  onClick={() => {
-                    setDateFrom('');
-                    setDateTo('');
-                  }}
-                >
-                  Clear dates
-                </button>
-              )}
-              <label className="refreshToggle">
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(event) => setAutoRefresh(event.target.checked)}
-                />
-                Auto-refresh
-              </label>
-            </section>
+              <div className="page-actions">
+                <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconRefresh /></button>
+                <button className="btn primary" data-admin-only="">Export report <IconExport /></button>
+              </div>
+            </div>
 
-            <section className="workbench">
-              <div className="requestsPanel">
-                <div className="panelHeader">
-                  <div>
-                    <h2>Requests</h2>
-                    <span>{filteredRequests.length} visible</span>
+            <div className="tabs">
+              <button className={activeTab === 'dashboard' ? 'on' : ''} onClick={() => setActiveTab('dashboard')}>Dashboard</button>
+              <button className={activeTab === 'chat' ? 'on' : ''} onClick={() => setActiveTab('chat')}>Chat</button>
+            </div>
+
+            {activeTab === 'dashboard' ? (
+              <div id="tab-dashboard">
+                <div className="grid-2 section-gap" style={{ marginTop: 24 }}>
+                  <MetricCard
+                    title="Requests received"
+                    tip="Inbound webhook count over the period. Includes parse-failed deliveries that never made it to a PA."
+                    desc="Inbound pre-auth volume across the period"
+                    big={`${summary.received_24h ?? 0} <small>last 24h</small>`}
+                    chartHtml={chartBars(recvSeries, { accent: 'var(--ink-3)', labels: dayLabels })}
+                    moveH="Inbound volume"
+                    moveP={`${summary.total ?? 0} requests this period. ${summary.processing ?? 0} processing and ${summary.pending ?? 0} pending a first decision.`}
+                  />
+                  <MetricCard
+                    title="Decision outcomes"
+                    tip="Distribution of final decisions for this period: Approve, Deny, Escalate."
+                    desc="How the AI pipeline resolved this period's requests"
+                    chartHtml={chartDonut(outcomeSplit)}
+                    moveH={`${approvalRate}% approval rate`}
+                    moveP={`${(summary.approved ?? 0).toLocaleString()} approved, ${summary.denied ?? 0} denied, ${summary.escalated ?? 0} escalated for human review.`}
+                  />
+                  <MetricCard
+                    title="Decision latency"
+                    tip="Average seconds from when a PA was received to when the agent finished deciding. Excludes still-processing PAs."
+                    desc="Time from received → decided"
+                    big={`${avgLatTxt}<small>s avg</small>`}
+                    chartHtml={chartLine(latSeries, { accent: 'var(--indigo)', suffix: 's' })}
+                    moveH="Seconds, not minutes"
+                    moveP={`Average decision latency is ${avgLatTxt}s versus a ~30-minute manual baseline.`}
+                  />
+                  <MetricCard
+                    title="PA value approved"
+                    tip="Sum of agent_result.amount_approved for APPROVE decisions in this period. Excludes denied, escalated, and pending PAs."
+                    desc="Total authorized value (NGN)"
+                    big={fmtNGN(summary.total_amount_approved ?? 0)}
+                    chartHtml={chartLine(valSeries, { accent: 'var(--ok)', prefix: '₦' })}
+                    moveH={`${fmtNGN(summary.total_amount_approved ?? 0)} authorized`}
+                    moveP="Authorized value across approved requests this period."
+                  />
+                </div>
+
+                <div className="section-gap" style={{ marginTop: 34 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+                    <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Request queue</h2>
+                    <span className="muted mono" style={{ fontSize: 12 }}>{filtered.length} request{filtered.length === 1 ? '' : 's'}</span>
                   </div>
-                  {loading && <span className="loadingText">Loading...</span>}
-                </div>
-
-                <div className="requestList">
-                  {filteredRequests.map((request) => (
-                    <button
-                      className={`requestRow ${request.request_id === selectedRequest?.request_id ? 'active' : ''}`}
-                      key={request.request_id}
-                      type="button"
-                      onClick={() => setSelectedId(request.request_id)}
-                    >
-                      <div className="requestMain">
-                        <strong>{request.display_request_id || request.request_id}</strong>
-                        <span>{request.patient_name || request.patient_id}</span>
-                      </div>
-                      <div className="requestMeta">
-                        <span>{request.plan || 'No plan'}</span>
-                        <span>{request.item_description || 'No item'}</span>
-                        <strong>{formatMoney(request.requested_amount)}</strong>
-                      </div>
-                      <div className="requestStatusLine">
-                        <span className={requestStatusClass(request)}>{requestStatusLabel(request)}</span>
-                        <span className="timeChip">
-                          <Clock3 size={13} />
-                          {formatDuration(request.processing_seconds)}
-                        </span>
-                        <span>{formatDate(request.received_at)}</span>
-                        <ChevronRight size={16} />
-                      </div>
-                    </button>
-                  ))}
-
-                  {!filteredRequests.length && (
-                    <div className="emptyState">
-                      <ClipboardList size={24} />
-                      <strong>No pre-auth requests yet</strong>
-                      <span>Incoming webhook requests will appear here after processing starts.</span>
+                  <div className="toolbar" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+                    <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }}>
+                      <IconSearch />
+                      <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search reference, patient, provider, plan, item, facility…"
+                    data-tip="Searches patient ID, request ID, decision, and the full webhook payload (names, facilities, plans, item descriptions). Server-side, across all pages."
+                    data-tip-pos="below"
+                    data-tip-align="left"
+                  />
                     </div>
-                  )}
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Filters by webhook received_at (UTC). Leave blank to include everything." data-tip-pos="below">
+                      <span className="muted mono" style={{ fontSize: 11 }}>From</span>
+                      <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} style={{ width: 132, border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)' }} />
+                    </div>
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Filters by webhook received_at (UTC). Leave blank to include everything." data-tip-pos="below">
+                      <span className="muted mono" style={{ fontSize: 11 }}>To</span>
+                      <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} style={{ width: 132, border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)' }} />
+                    </div>
+                    {(dateFrom || dateTo) ? <button className="btn sm" onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }}>Clear dates</button> : null}
+                    <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Filters by the patient’s plan tier on the PA. Case-insensitive — Gold and GOLD group as one." data-tip-pos="below">
+                      <span className="muted mono" style={{ fontSize: 11 }}>Plan</span>
+                      <select value={planFilter} onChange={(e) => { setPlanFilter(e.target.value); setCurrentPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
+                        <option value="all">All plans</option>
+                        {planOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    {statusFilters.map((s) => (
+                      <button
+                        key={s}
+                        className={`statbtn ${statusFilter === s ? 'on' : ''}`}
+                        onClick={() => setStatusFilter(s)}
+                        data-tip={s === 'all' ? 'Show requests of every status.' : (STATUS_META[s]?.help || undefined)}
+                        data-tip-pos="below"
+                      >{s === 'all' ? 'All' : (STATUS_META[s]?.label || s)}</button>
+                    ))}
+                  </div>
+                  <div className="queue">
+                    <QueueHead />
+                    <div>
+                      {filtered.map((r) => (
+                        <QueueRow key={r.request_id} r={r} selected={selected?.request_id === r.request_id && drawerOpen} onSelect={openRequest} onOpenPatient={(pid) => navigateTo({ nav: 'patients', patient_id: pid })} />
+                      ))}
+                      {!filtered.length && (
+                        <div className="stub-empty" style={{ padding: '60px 24px' }}>
+                          <div className="ph">▤</div><h4>No requests</h4>
+                          <p>{error ? error : 'Incoming webhook requests will appear here after processing.'}</p>
+                        </div>
+                      )}
+                    </div>
+                    {(dashboard?.pagination?.total_pages || 0) > 1 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, padding: '14px 16px', borderTop: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
+                        <span>Page {currentPage} of {dashboard.pagination.total_pages} · {dashboard.pagination.total.toLocaleString()} requests</span>
+                        <button className="btn sm" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
+                        <button className="btn sm" disabled={currentPage >= dashboard.pagination.total_pages} onClick={() => setCurrentPage((p) => p + 1)}>Next ›</button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-
-              <RequestDetail
-                request={selectedRequest}
-                events={requestEvents}
-                eventsLoading={eventsLoading}
-                eventsError={eventsError}
-              />
-            </section>
-          </>
-        )}
-
-        {activeTab === 'eligibility' && (
-          <EmptyModule
-            icon={UserCheck}
-            title="Eligibility Checks"
-            channels={['Email', 'WhatsApp']}
-            columns={['Source', 'Provider', 'Enrollee ID', 'Plan', 'Status', 'Received']}
-            emptyTitle="No eligibility checks yet"
-            emptyText="Provider eligibility requests will appear here."
-          />
-        )}
-
-        {activeTab === 'support' && (
-          <EmptyModule
-            icon={MessageSquare}
-            title="Support"
-            channels={['Email', 'WhatsApp', 'Calls']}
-            columns={['Channel', 'Requester', 'Intent', 'Assigned to', 'Status', 'Last activity']}
-            emptyTitle="No support conversations yet"
-            emptyText="Customer and provider support conversations will appear here."
-          />
+            ) : (
+              <div id="tab-chat" style={{ marginTop: 30 }}>
+                <div className="metric" style={{ maxWidth: 760 }}>
+                  <h3>Ask about this report</h3>
+                  <p className="desc">The assistant answers from this period's pre-auth queue and summary — decisions, denials, escalations, latency, value.</p>
+                  <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>Try asking</div>
+                    <div className="suggests" style={{ padding: 0 }}>
+                      <button type="button">Why were requests escalated this period?</button>
+                      <button type="button">Which denials were due to eligibility?</button>
+                      <button type="button">What's the total approved value and biggest single request?</button>
+                    </div>
+                    <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>Type your question in the bar at the bottom of the screen.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : (
+          <section id="view-stub" style={{ paddingBottom: 120 }}>
+            {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
+              : activeNav === 'patients' ? (
+                  selectedPatientId
+                    ? <PatientDetail
+                        patient={patientDetail}
+                        loading={patientDetailLoading}
+                        error={patientDetailError}
+                        openedIds={openedPaIds}
+                        toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+                        onBack={() => navigateTo({ patient_id: '' })}
+                        onDownloadPdf={downloadPatientPdf}
+                        session={session}
+                        orgName={viewOrgId?.name || session.org_name}
+                      />
+                    : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} onBack={() => navigateTo({ nav: 'intake', patient_id: '' })} />
+                )
+              : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
+              : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
+              : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
+              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isPlatformAdmin={isPlatformAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
+              : <StubView id={activeNav} session={session} />}
+          </section>
         )}
       </main>
+
+      <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
+      <Drawer
+        request={selected}
+        siblings={siblings}
+        onSelectSibling={openRequest}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        paEvents={eventsForSelected}
+        paEventsLoading={paEvents.loading}
+        paEventsError={paEvents.error}
+        onOpenPatient={(pid) => { setDrawerOpen(false); navigateTo({ nav: 'patients', patient_id: pid }); }}
+      />
     </div>
-  );
-}
-
-function EmptyModule({ icon: Icon, title, channels, columns, emptyTitle, emptyText }) {
-  return (
-    <section className="emptyModule">
-      <div className="moduleHeader">
-        <div>
-          <span className="smallLabel">Module</span>
-          <h2>{title}</h2>
-        </div>
-        <div className="channelPills">
-          {channels.map((channel) => (
-            <span key={channel}>{channel}</span>
-          ))}
-        </div>
-      </div>
-
-      <div className="emptyModuleBody">
-        <div className="emptyModuleIcon">
-          <Icon size={26} />
-        </div>
-        <strong>{emptyTitle}</strong>
-        <span>{emptyText}</span>
-      </div>
-
-      <div className="emptyTable">
-        <div className="emptyTableHead">
-          {columns.map((column) => (
-            <span key={column}>{column}</span>
-          ))}
-        </div>
-        <div className="emptyTableRow">
-          <Inbox size={18} />
-          <span>No records</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function RequestDetail({ request, events = [], eventsLoading = false, eventsError = '' }) {
-  if (!request) {
-    return (
-      <aside className="detailPanel emptyDetail">
-        <ShieldCheck size={28} />
-        <strong>Select a request</strong>
-        <span>Decision details and agent logs will appear here.</span>
-      </aside>
-    );
-  }
-
-  const agentLogs = request.agent_logs || [];
-
-  return (
-    <aside className="detailPanel">
-      <div className="detailHeader">
-        <div>
-          <span className="smallLabel">Selected request</span>
-          <h2>{request.display_request_id || request.request_id}</h2>
-        </div>
-        <span className={requestStatusClass(request)}>{requestStatusLabel(request)}</span>
-      </div>
-
-      <div className="decisionBlock">
-        <div className="decisionTopline">
-          <span>{isLiveAmanPayload(request) ? 'Intake captured' : request.decision || request.agent_step || 'Pending decision'}</span>
-          {!isLiveAmanPayload(request) && request.confidence && <strong>{request.confidence} confidence</strong>}
-        </div>
-        <p>
-          {isLiveAmanPayload(request)
-            ? 'Live AMAN PA payload received. Decision automation is paused until the real payload mapping is fully validated.'
-            : request.reason || 'The agent has not produced a final reason yet.'}
-        </p>
-      </div>
-
-      <dl className="detailGrid">
-        <div>
-          <dt>Patient</dt>
-          <dd>{request.patient_name ? `${request.patient_name} · ${request.patient_id}` : request.patient_id}</dd>
-        </div>
-        <div>
-          <dt>Plan</dt>
-          <dd>{request.plan || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Requested item</dt>
-          <dd>{request.item_description || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Requested value</dt>
-          <dd>{formatMoney(request.requested_amount ?? request.estimated_cost)}</dd>
-        </div>
-        <div>
-          <dt>Line items</dt>
-          <dd>{request.line_item_count || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Event history</dt>
-          <dd>
-            {request.event_count ? `${request.event_count} event${request.event_count === 1 ? '' : 's'}` : 'Not captured'}
-          </dd>
-        </div>
-        <div>
-          <dt>Latest addition</dt>
-          <dd>{request.latest_items_added_total ? formatMoney(request.latest_items_added_total) : 'None'}</dd>
-        </div>
-        <div>
-          <dt>Facility</dt>
-          <dd>{request.facility || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Provider</dt>
-          <dd>{providerLabel(request.requesting_provider) || 'Not provided'}</dd>
-        </div>
-        <div>
-          <dt>Received</dt>
-          <dd>{formatDate(request.received_at)}</dd>
-        </div>
-        <div>
-          <dt>Time per PA</dt>
-          <dd>{formatDuration(request.processing_seconds)}</dd>
-        </div>
-      </dl>
-
-      <div className="sectionHeader">
-        <div>
-          <h3>PA Event Timeline</h3>
-          <span>
-            {eventsLoading
-              ? 'Loading history'
-              : `${events.length || request.event_count || 0} event${(events.length || request.event_count || 0) === 1 ? '' : 's'} captured`}
-          </span>
-        </div>
-      </div>
-
-      {eventsError && <div className="eventError">{eventsError}</div>}
-
-      <div className="timeline eventTimeline">
-        {events.map((event) => {
-          const sequence = toNumber(event.event_sequence) || 0;
-          const eventItems = itemsAddedFromEvent(event);
-          return (
-            <div className="timelineItem" key={event.event_id || event.id}>
-              <div className="timelineBadge">{sequence || '?'}</div>
-              <div className="timelineBody">
-                <div className="timelineTitle">
-                  <strong>{sequence <= 1 ? 'First captured event' : 'Additional items'}</strong>
-                  <span className="status info">{formatMoney(eventValue(event))}</span>
-                </div>
-                <div className="eventMetaGrid">
-                  <span>{eventItemCount(event)} line item{eventItemCount(event) === 1 ? '' : 's'}</span>
-                  <span>Current PA snapshot: {formatMoney(event.total_requested_cost)}</span>
-                  <span>{formatDate(event.submitted_at || event.occurred_at || event.created_at)}</span>
-                </div>
-                <div className="eventItems">
-                  {eventItems.map((item) => (
-                    <div className="eventItemRow" key={item.id}>
-                      <span>{item.name}</span>
-                      <small>Qty {item.quantity}</small>
-                      <strong>{formatMoney(item.requested_cost)}</strong>
-                    </div>
-                  ))}
-                  {!eventItems.length && <span className="mutedInline">No item details captured for this event.</span>}
-                </div>
-                <details className="jsonDetails">
-                  <summary>
-                    <FileJson size={15} />
-                    Event JSON
-                  </summary>
-                  <pre>{safeJson(event.raw_payload || event.payload_summary || event)}</pre>
-                </details>
-              </div>
-            </div>
-          );
-        })}
-
-        {!events.length && !eventsLoading && !eventsError && (
-          <div className="emptyState compact">
-            <Clock3 size={22} />
-            <strong>No event history yet</strong>
-            <span>This request was captured before event tracking or the backend has not returned events.</span>
-          </div>
-        )}
-      </div>
-
-      <div className="sectionHeader">
-        <div>
-          <h3>Agent Timeline</h3>
-          <span>{agentLogs.length} logs captured</span>
-        </div>
-      </div>
-
-      <div className="timeline">
-        {agentLogs.map((log) => {
-          const outcome = agentOutcome(log);
-          return (
-            <div className="timelineItem" key={`${log.agent_num}-${log.logged_at}`}>
-              <div className="timelineBadge">{log.agent_num}</div>
-              <div className="timelineBody">
-                <div className="timelineTitle">
-                  <strong>{log.agent_name}</strong>
-                  <span className={statusClass(outcome)}>{prettyStatus(outcome)}</span>
-                </div>
-                <p>{resultSummary(log.result)}</p>
-                <span className="timestamp">{formatDate(log.logged_at)}</span>
-                <details className="jsonDetails">
-                  <summary>
-                    <FileJson size={15} />
-                    Result JSON
-                  </summary>
-                  <pre>{safeJson(log.result)}</pre>
-                </details>
-              </div>
-            </div>
-          );
-        })}
-
-        {!agentLogs.length && (
-          <div className="emptyState compact">
-            <Clock3 size={22} />
-            <strong>No agent logs yet</strong>
-            <span>The request may still be pending or processing.</span>
-          </div>
-        )}
-      </div>
-
-      <details className="payloadDetails">
-        <summary>
-          <FileJson size={16} />
-          Extracted payload
-        </summary>
-        <pre>{safeJson(request.extracted_fields || request.raw_payload)}</pre>
-      </details>
-    </aside>
   );
 }
