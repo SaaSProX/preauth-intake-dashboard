@@ -2189,6 +2189,7 @@ function AppInner() {
   const [createdOrg, setCreatedOrg] = useState(null);
   const [createOrgError, setCreateOrgError] = useState('');
   const [viewOrgId, setViewOrgId] = useState(null); // { id, name } when a platform admin is drilled into another org
+  const [switchingOrg, setSwitchingOrg] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 25;
   const [dateFrom, setDateFrom] = useState(() => todayDateInputValue());
@@ -2278,6 +2279,7 @@ function AppInner() {
       setError(err.message || 'Could not load dashboard');
     } finally {
       if (!silent) setLoading(false);
+      if (!silent) setSwitchingOrg(false);
     }
   }
 
@@ -2542,6 +2544,7 @@ function AppInner() {
     }
   }
   function enterDrillIn(org) {
+    setSwitchingOrg(true);
     setViewOrgId({ id: org.id, name: org.name });
     setActiveNav('intake');
     setSelectedId('');
@@ -2554,6 +2557,7 @@ function AppInner() {
     urlSetOrg(org.id);
   }
   function clearOrgSelection() {
+    setSwitchingOrg(true);
     setViewOrgId(null);
     setSelectedId('');
     setCurrentPage(1);
@@ -2577,13 +2581,13 @@ function AppInner() {
     const isSuper = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
     if (isSuper && !orgs && !orgsLoading) loadOrgs();
     if (!isSuper) {
-      if (viewOrgId) { setViewOrgId(null); urlSetOrg(null); }
+      if (viewOrgId) { setSwitchingOrg(true); setViewOrgId(null); urlSetOrg(null); }
       return;
     }
     const params = new URLSearchParams(window.location.search);
     const want = params.get('org');
     if (!want) {
-      if (viewOrgId) setViewOrgId(null);
+      if (viewOrgId) { setSwitchingOrg(true); setViewOrgId(null); }
       return;
     }
     const wantId = Number(want);
@@ -2592,10 +2596,11 @@ function AppInner() {
     const match = list.find((o) => o.id === wantId);
     if (match) {
       if (!viewOrgId || viewOrgId.id !== wantId || viewOrgId.name !== match.name) {
+        setSwitchingOrg(true);
         setViewOrgId({ id: wantId, name: match.name });
       }
     } else {
-      if (!viewOrgId || viewOrgId.id !== wantId) setViewOrgId({ id: wantId, name: '…' });
+      if (!viewOrgId || viewOrgId.id !== wantId) { setSwitchingOrg(true); setViewOrgId({ id: wantId, name: '…' }); }
       if (!orgs && !orgsLoading) loadOrgs();
     }
     // eslint-disable-next-line
@@ -2609,11 +2614,12 @@ function AppInner() {
     const onPop = () => {
       const params = new URLSearchParams(window.location.search);
       const want = params.get('org');
-      if (!want) { setViewOrgId(null); return; }
+      if (!want) { setSwitchingOrg(true); setViewOrgId(null); return; }
       const wantId = Number(want);
       if (!Number.isFinite(wantId)) return;
       const list = (orgs && Array.isArray(orgs.orgs)) ? orgs.orgs : (Array.isArray(orgs) ? orgs : []);
       const match = list.find((o) => o.id === wantId);
+      setSwitchingOrg(true);
       setViewOrgId({ id: wantId, name: match ? match.name : '…' });
     };
     window.addEventListener('popstate', onPop);
@@ -2886,7 +2892,7 @@ function AppInner() {
 
             {activeTab === 'dashboard' ? (
               <div id="tab-dashboard" className="loading-host dashboard-loading-host">
-                <LoadingOverlay show={loading} label={dashboard ? 'Updating dashboard' : 'Loading dashboard'} />
+                <LoadingOverlay show={loading} label={switchingOrg ? 'Switching organization' : (dashboard ? 'Updating dashboard' : 'Loading dashboard')} />
                 <div className="section-gap" style={{ marginTop: 24 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
                     <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Queue filters</h2>
