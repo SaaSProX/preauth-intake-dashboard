@@ -1447,7 +1447,6 @@ function AppInner() {
   // Full patient history for the currently-open drawer. Fetched on demand so
   // siblings show across pages, not just within the visible 25.
   const [patientHistory, setPatientHistory] = useState({ patient_id: null, requests: [] });
-  const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
 
   useEffect(() => { document.body.dataset.layout = 'report'; return () => { delete document.body.dataset.layout; }; }, []);
   useEffect(() => { document.body.classList.toggle('role-member', role === 'member'); }, [role]);
@@ -1807,7 +1806,6 @@ function AppInner() {
     }
     if (patientHistory.patient_id === pid) return undefined; // already loaded
     let cancelled = false;
-    setPatientHistoryLoading(true);
     (async () => {
       try {
         const qs = new URLSearchParams();
@@ -1817,8 +1815,6 @@ function AppInner() {
         if (!cancelled) setPatientHistory({ patient_id: data.patient_id || pid, requests: data.requests || [] });
       } catch (_e) {
         if (!cancelled) setPatientHistory({ patient_id: pid, requests: [] });
-      } finally {
-        if (!cancelled) setPatientHistoryLoading(false);
       }
     })();
     return () => { cancelled = true; };
