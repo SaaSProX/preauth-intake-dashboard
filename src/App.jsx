@@ -562,7 +562,7 @@ function QueueHead() {
     </div>
   );
 }
-function QueueRow({ r, selected, onSelect }) {
+function QueueRow({ r, selected, onSelect, onOpenPatient }) {
   const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
   return (
     <div className={`qrow ${selected ? 'sel' : ''}`} onClick={() => onSelect(r.request_id)}>
@@ -571,9 +571,13 @@ function QueueRow({ r, selected, onSelect }) {
         {r.patient_name || <span className="muted">Unnamed enrollee</span>}
         {r.patient_pa_count > 1 ? (
           <span
+            role={onOpenPatient ? 'button' : undefined}
+            tabIndex={onOpenPatient ? 0 : undefined}
             className="mono"
-            data-tip={`This patient has ${r.patient_pa_count} pre-auth requests in this org. Open the drawer to see the full list under "Other requests from this patient".`}
-            style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)', fontSize: 10.5, fontWeight: 600, verticalAlign: 'middle' }}
+            data-tip={`This patient has ${r.patient_pa_count} pre-auth requests in this org. Click to open their patient page.`}
+            onClick={(e) => { if (!onOpenPatient) return; e.stopPropagation(); onOpenPatient(r.patient_id); }}
+            onKeyDown={(e) => { if (!onOpenPatient) return; if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onOpenPatient(r.patient_id); } }}
+            style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)', fontSize: 10.5, fontWeight: 600, verticalAlign: 'middle', cursor: onOpenPatient ? 'pointer' : 'default' }}
           >
             {r.patient_pa_count}× PAs
           </span>
@@ -878,14 +882,29 @@ function AgentTimeline({ r }) {
     </div>
   );
 }
-function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError }) {
+function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient }) {
   if (!r) return null;
   return (
     <div className="detail">
       <div className="dhead">
         <div>
           <div className="dref">{r.display_request_id}</div>
-          <h2 className="dname">{r.patient_name || 'Unnamed enrollee'}</h2>
+          {onOpenPatient && r.patient_id && r.patient_id !== '—' && r.patient_id.toLowerCase() !== 'unknown' ? (
+            <h2
+              className="dname"
+              role="button"
+              tabIndex={0}
+              data-tip="Open this patient's full page — all their PAs, totals, and outcome distribution."
+              data-tip-align="left"
+              onClick={() => onOpenPatient(r.patient_id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPatient(r.patient_id); } }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 4, textDecorationColor: 'var(--indigo-soft)' }}
+            >
+              {r.patient_name || 'Unnamed enrollee'}
+            </h2>
+          ) : (
+            <h2 className="dname">{r.patient_name || 'Unnamed enrollee'}</h2>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }} data-admin-only="">
           <button className="btn sm">Override</button>
@@ -897,7 +916,18 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
       <LineItems r={r} />
       {siblings && siblings.length > 0 ? (
         <div>
-          <div className="sec-h" data-tip="Every other PA from the same patient_id (or insurance_no fallback when patient_id is unknown), across all queue pages." data-tip-align="left">Other requests from this patient <span className="n">{siblings.length}</span></div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div className="sec-h" data-tip="Every other PA from the same patient_id (or insurance_no fallback when patient_id is unknown), across all queue pages." data-tip-align="left" style={{ marginBottom: 0 }}>Other requests from this patient <span className="n">{siblings.length}</span></div>
+            {onOpenPatient && r.patient_id && r.patient_id !== '—' && r.patient_id.toLowerCase() !== 'unknown' ? (
+              <button
+                className="btn sm"
+                onClick={() => onOpenPatient(r.patient_id)}
+                data-tip="Opens the dedicated patient page with totals, outcome distribution, and all PAs in one view."
+                data-tip-align="right"
+                style={{ fontSize: 11 }}
+              >View patient page →</button>
+            ) : null}
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
             {siblings.slice(0, 8).map((s) => (
               <button key={s.request_id} onClick={() => onSelectSibling && onSelectSibling(s.request_id)} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px', cursor: 'pointer', textAlign: 'left' }} title="Switch to this request">
@@ -986,7 +1016,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
     </div>
   );
 }
-function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError }) {
+function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient }) {
   return (
     <>
       <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} />
@@ -994,7 +1024,7 @@ function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, p
         <button className="icon-btn dclose" onClick={onClose} aria-label="Close">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
-        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} paEvents={paEvents} paEventsLoading={paEventsLoading} paEventsError={paEventsError} /> : null}</div></div>
+        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} paEvents={paEvents} paEventsLoading={paEventsLoading} paEventsError={paEventsError} onOpenPatient={onOpenPatient} /> : null}</div></div>
       </aside>
     </>
   );
@@ -1029,6 +1059,7 @@ const NAV = [
   { id: 'intake', label: 'Pre-Auth Intake', live: true },
   { id: 'health', label: 'Integration Health', live: true },
   { id: 'audit', label: 'Audit Trail', live: true },
+  { id: 'patients', label: 'Patients', live: true },
   { id: 'eligibility', label: 'Eligibility Checks', live: false },
   { id: 'support', label: 'Support', live: false },
 ];
@@ -1172,6 +1203,240 @@ function HealthView({ data, loading, error, org }) {
             })}
           </div>
         </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   Patients — index + detail (wired to /auth/patients + /auth/patient-history)
+   ============================================================ */
+const OUTCOME_DOT = {
+  approve:    'var(--ok)',
+  deny:       'var(--bad)',
+  escalate:   'var(--warn)',
+  processing: 'var(--indigo)',
+  pending:    'var(--slate)',
+  received:   'var(--recv)',
+  error:      'var(--bad)',
+};
+const OUTCOME_LABEL = {
+  approve: 'approve', deny: 'deny', escalate: 'escalate',
+  processing: 'processing', pending: 'pending', received: 'received', error: 'error',
+};
+function OutcomePills({ counts, size = 'sm' }) {
+  const items = ['approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error']
+    .map((k) => [k, counts?.[k] || 0])
+    .filter(([, n]) => n > 0);
+  if (!items.length) return <span className="muted mono" style={{ fontSize: 11 }}>—</span>;
+  const padding = size === 'lg' ? '4px 10px' : '2px 8px';
+  const fontSize = size === 'lg' ? 12 : 11;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {items.map(([k, n]) => (
+        <span
+          key={k}
+          className="mono"
+          data-tip={`${n} ${OUTCOME_LABEL[k]} ${n === 1 ? 'request' : 'requests'} from this patient.`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding, borderRadius: 999, fontSize, fontWeight: 600,
+            background: 'var(--bg-2)', border: '1px solid var(--line)', color: 'var(--ink-2)',
+          }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: 99, background: OUTCOME_DOT[k] }} />
+          {n} {OUTCOME_LABEL[k]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, setOutcome, page, setPage, onOpenPatient }) {
+  const list = (data && data.patients) || [];
+  const meta = data?.meta || {};
+  const pagination = data?.pagination || {};
+  const dw = meta.data_window || {};
+  const fmt = (iso) => { if (!iso) return null; const d = new Date(iso); return isNaN(d) ? null : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+  const dwFrom = fmt(dw.earliest); const dwTo = fmt(dw.latest);
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Patients</h1>
+          <p className="page-sub">
+            <span className="cal" aria-hidden="true"><IconCal /></span>
+            <span data-tip="Distinct patients with at least one PA in this org. 'Unknown' patient IDs are excluded.">{meta.distinct_patients_org_total ?? 0} patients</span>
+            {dwFrom && dwTo ? <><span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>{dwFrom} → {dwTo}</> : null}
+          </p>
+        </div>
+      </div>
+      <div className="toolbar" style={{ marginTop: 18, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }} data-tip="Search across patient name, patient ID, and insurance number." data-tip-pos="below" data-tip-align="left">
+          <IconSearch />
+          <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search by name or ID…" />
+        </div>
+        <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Reorder the list by recency, volume, value, or denial count." data-tip-pos="below">
+          <span className="muted mono" style={{ fontSize: 11 }}>Sort</span>
+          <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
+            <option value="latest">Latest activity</option>
+            <option value="count">Most PAs</option>
+            <option value="requested">Highest requested</option>
+            <option value="approved">Highest approved</option>
+            <option value="denials">Most denials</option>
+          </select>
+        </div>
+        <div className="search" style={{ width: 'auto', padding: '0 12px', gap: 6 }} data-tip="Narrow to patients who have at least one PA of a given outcome." data-tip-pos="below">
+          <span className="muted mono" style={{ fontSize: 11 }}>Outcome</span>
+          <select value={outcome} onChange={(e) => { setOutcome(e.target.value); setPage(1); }} style={{ border: 'none', outline: 'none', fontFamily: 'var(--mono)', fontSize: 12, background: 'transparent', color: 'var(--ink)', padding: '6px 4px' }}>
+            <option value="all">All patients</option>
+            <option value="denials">Has denials</option>
+            <option value="escalations">Has escalations</option>
+            <option value="approvals">Has approvals</option>
+            <option value="open">Has open PAs</option>
+          </select>
+        </div>
+      </div>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      <div className="queue">
+        <div className="qhead" style={{ gridTemplateColumns: '1.6fr 70px 120px 120px 1.4fr 90px' }}>
+          <span>Patient</span>
+          <span data-tip="Number of pre-auth requests this patient has in this org.">PAs</span>
+          <span data-tip="Sum of requested amounts across all their PAs.">Requested</span>
+          <span data-tip="Sum of agent-approved amounts (only counts APPROVE decisions).">Approved</span>
+          <span data-tip="Distribution of decisions across this patient's PAs.">Outcomes</span>
+          <span style={{ textAlign: 'right' }}>Latest</span>
+        </div>
+        <div>
+          {loading && !list.length ? (
+            <div className="muted mono" style={{ padding: '24px 14px', fontSize: 12 }}>Loading patients…</div>
+          ) : !list.length ? (
+            <div className="stub-empty" style={{ padding: '60px 24px' }}>
+              <div className="ph">◐</div><h4>No patients match</h4>
+              <p>{q ? 'Try a broader search.' : 'No PAs in this org yet, or all rows have unknown patient IDs.'}</p>
+            </div>
+          ) : list.map((p) => (
+            <div
+              key={p.patient_id}
+              className="qrow"
+              style={{ gridTemplateColumns: '1.6fr 70px 120px 120px 1.4fr 90px', cursor: 'pointer' }}
+              onClick={() => onOpenPatient(p.patient_id)}
+            >
+              <div className="pt">
+                {p.patient_name || <span className="muted">Unnamed enrollee</span>}
+                <small>{p.patient_id}{p.insurance_no && p.insurance_no !== p.patient_id ? ` · ${p.insurance_no}` : ''}</small>
+              </div>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{p.pa_count}</div>
+              <div className="mono" style={{ fontSize: 12.5 }}>{fmtNGN(p.total_requested)}</div>
+              <div className="mono" style={{ fontSize: 12.5 }}>{p.total_approved > 0 ? fmtNGN(p.total_approved) : <span className="muted">—</span>}</div>
+              <div><OutcomePills counts={p.outcome_counts} /></div>
+              <div className="when" style={{ textAlign: 'right' }}>{p.latest_received_at ? timeAgo(p.latest_received_at) : '—'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {(pagination.total_pages || 0) > 1 ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>
+          <span>Page {pagination.page} of {pagination.total_pages} · {pagination.total} patients</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn sm" disabled={pagination.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
+            <button className="btn sm" disabled={pagination.page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}>Next ›</button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack }) {
+  const requests = (patient?.requests || []).map(mapRequest);
+  // Aggregate the same shape /auth/patients returns, but client-side from the
+  // full /patient-history payload (more accurate than the index aggregate).
+  const counts = requests.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+  const totalRequested = requests.reduce((s, r) => s + (Number(r.requested_amount) || 0), 0);
+  const totalApproved  = requests.reduce((s, r) => s + (r.status === 'approve' ? Number(r.amount_approved || 0) : 0), 0);
+  const header = requests[0] || {};
+  return (
+    <>
+      <div style={{ marginBottom: 12 }}>
+        <button className="btn sm" onClick={onBack} data-tip="Return to the patients list." data-tip-align="left">← Back to patients</button>
+      </div>
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 12, padding: '20px 22px', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <div className="muted mono" style={{ fontSize: 12, marginBottom: 4 }}>
+              {patient?.patient_id || '—'}{header.plan && header.plan !== '—' ? <> · <PlanTag plan={header.plan} /></> : null}
+            </div>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 26, fontWeight: 600, margin: 0, color: 'var(--ink)' }}>
+              {header.patient_name || 'Unnamed enrollee'}
+            </h1>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 36, marginTop: 22, borderTop: '1px dashed var(--line-2)', paddingTop: 16, fontFamily: 'var(--mono)' }}>
+          <div>
+            <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' }} data-tip="Number of pre-auth requests this patient has on the platform.">Pre-auths</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{requests.length}</div>
+          </div>
+          <div>
+            <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' }} data-tip="Sum of requested amounts across all this patient's PAs.">Requested · total</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{fmtNGN(totalRequested)}</div>
+          </div>
+          <div>
+            <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' }} data-tip="Sum of agent-approved amounts. Counts APPROVE decisions only.">Approved · total</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{fmtNGN(totalApproved)}</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <div className="muted" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase', fontFamily: 'var(--mono)', marginBottom: 8 }}>Outcomes</div>
+          <OutcomePills counts={counts} size="lg" />
+        </div>
+      </div>
+      {error ? <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      {requests.length > 1 ? (
+        <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
+          <span className="led" style={{ background: 'var(--indigo)' }} />
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+            This enrollee has <b>{requests.length} pre-auth requests</b>. Each row below has its own 4-agent reasoning timeline — expand any request to see exactly how the AI decided it.
+          </span>
+        </div>
+      ) : null}
+      {loading && !requests.length ? (
+        <div className="muted mono" style={{ padding: '24px 14px', fontSize: 12 }}>Loading patient history…</div>
+      ) : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {requests.map((r) => {
+          const isOpen = openedIds.has(r.request_id);
+          const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
+          return (
+            <div key={r.request_id} style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 9, overflow: 'hidden' }}>
+              <button
+                onClick={() => toggleRow(r.request_id)}
+                style={{
+                  width: '100%', display: 'grid', gridTemplateColumns: '20px 1.6fr 2fr 110px 130px 80px', alignItems: 'center',
+                  gap: 12, padding: '12px 14px', cursor: 'pointer', background: 'transparent', border: 'none', textAlign: 'left',
+                }}
+              >
+                <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 11 }}>{isOpen ? '▾' : '▸'}</span>
+                <span className="mono" style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{ref}</span>
+                <span style={{ fontSize: 13 }}>{r.item_description}{r.line_item_count > 1 ? <span className="muted"> · {r.line_item_count}</span> : ''}</span>
+                <span className="mono" style={{ fontSize: 12.5, textAlign: 'right' }}>{fmtNGN(r.requested_amount)}</span>
+                <span style={{ textAlign: 'right' }}><Pill status={r.status} /></span>
+                <span className="when" style={{ textAlign: 'right' }}>{r.received_label}</span>
+              </button>
+              {isOpen ? (
+                <div style={{ padding: '14px 18px 20px', borderTop: '1px solid var(--line)', background: 'var(--bg-2)' }}>
+                  <DetailView r={r} siblings={[]} onSelectSibling={() => {}} paEvents={[]} paEventsLoading={false} paEventsError="" />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {!loading && !requests.length ? (
+          <div className="stub-empty" style={{ padding: '60px 24px' }}>
+            <div className="ph">◐</div><h4>No PAs for this patient</h4>
+            <p>This patient ID didn't match any records in this org.</p>
+          </div>
+        ) : null}
       </div>
     </>
   );
@@ -1564,7 +1829,27 @@ function AppInner() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [activeNav, setActiveNav] = useState('intake');
+  const [activeNav, setActiveNav] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('nav') || 'intake'; }
+    catch { return 'intake'; }
+  });
+  // Patients page state — list + detail share this single view, switched by
+  // ?patient= in the URL.
+  const [patients, setPatients] = useState(null);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsError, setPatientsError] = useState('');
+  const [patientsQuery, setPatientsQuery] = useState('');
+  const [patientsSort, setPatientsSort] = useState('latest');
+  const [patientsOutcome, setPatientsOutcome] = useState('all');
+  const [patientsPage, setPatientsPage] = useState(1);
+  const [selectedPatientId, setSelectedPatientId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('patient') || ''; }
+    catch { return ''; }
+  });
+  const [patientDetail, setPatientDetail] = useState(null); // { patient_id, requests }
+  const [patientDetailLoading, setPatientDetailLoading] = useState(false);
+  const [patientDetailError, setPatientDetailError] = useState('');
+  const [openedPaIds, setOpenedPaIds] = useState(() => new Set()); // which PA rows in detail view are expanded
   const [activeTab, setActiveTab] = useState('dashboard');
   const [role, setRole] = useState('admin');
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('saaspro-sidebar-collapsed') === '1'; } catch { return false; } });
@@ -1784,6 +2069,56 @@ function AppInner() {
     catch (err) { setOrgsError(err.message || 'Could not load organizations'); }
     finally { setOrgsLoading(false); }
   }
+  async function loadPatients() {
+    if (!session?.token) return;
+    setPatientsLoading(true);
+    setPatientsError('');
+    try {
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      if (patientsQuery.trim()) qs.set('q', patientsQuery.trim());
+      if (patientsSort && patientsSort !== 'latest') qs.set('sort', patientsSort);
+      if (patientsOutcome && patientsOutcome !== 'all') qs.set('outcome', patientsOutcome);
+      qs.set('page', String(patientsPage));
+      qs.set('page_size', '25');
+      setPatients(await apiRequest('/auth/patients?' + qs.toString()));
+    } catch (err) { setPatientsError(err.message || 'Could not load patients'); }
+    finally { setPatientsLoading(false); }
+  }
+  async function loadPatientDetail(pid) {
+    if (!session?.token || !pid) return;
+    setPatientDetailLoading(true);
+    setPatientDetailError('');
+    try {
+      const qs = new URLSearchParams();
+      qs.set('patient_id', pid);
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      const data = await apiRequest('/auth/patient-history?' + qs.toString());
+      setPatientDetail({ patient_id: data.patient_id || pid, requests: data.requests || [] });
+    } catch (err) {
+      setPatientDetail({ patient_id: pid, requests: [] });
+      setPatientDetailError(err.message || 'Could not load patient');
+    } finally { setPatientDetailLoading(false); }
+  }
+  function navigateTo({ nav, patient_id }) {
+    const params = new URLSearchParams(window.location.search);
+    if (nav != null) {
+      if (nav === 'intake') params.delete('nav'); else params.set('nav', nav);
+    }
+    if (patient_id != null) {
+      if (patient_id) params.set('patient', patient_id); else params.delete('patient');
+    }
+    const qs = params.toString();
+    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.pushState({}, '', next);
+    }
+    if (nav != null) setActiveNav(nav);
+    if (patient_id != null) {
+      setSelectedPatientId(patient_id);
+      setOpenedPaIds(new Set()); // reset expanded rows when switching patients
+    }
+  }
   async function createOrg() {
     const name = newOrgName.trim();
     const email = newOrgAdminEmail.trim();
@@ -1933,8 +2268,42 @@ function AppInner() {
     if (activeNav === 'team' && !team) loadTeam();
     if (activeNav === 'apikey' && !apikey) loadApiKey();
     if (activeNav === 'onboarding' && !orgs) loadOrgs();
+    if (activeNav === 'patients' && !patients) loadPatients();
     // eslint-disable-next-line
   }, [session?.token, activeNav]);
+
+  // Refetch the patients list when the active filters change.
+  useEffect(() => {
+    if (!session?.token || activeNav !== 'patients') return;
+    loadPatients();
+    // eslint-disable-next-line
+  }, [session?.token, viewOrgId, patientsQuery, patientsSort, patientsOutcome, patientsPage]);
+
+  // Fetch the selected patient's detail when ?patient= is set.
+  useEffect(() => {
+    if (!session?.token || activeNav !== 'patients' || !selectedPatientId) {
+      if (!selectedPatientId && patientDetail) setPatientDetail(null);
+      return;
+    }
+    if (patientDetail?.patient_id === selectedPatientId) return;
+    loadPatientDetail(selectedPatientId);
+    // eslint-disable-next-line
+  }, [session?.token, activeNav, selectedPatientId, viewOrgId]);
+
+  // Browser back/forward — re-sync nav + patient from the URL.
+  useEffect(() => {
+    if (!session?.token) return undefined;
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextNav = params.get('nav') || 'intake';
+      const nextPatient = params.get('patient') || '';
+      setActiveNav(nextNav);
+      setSelectedPatientId(nextPatient);
+      if (!nextPatient) setOpenedPaIds(new Set());
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [session?.token]);
 
   const rawRequests = dashboard?.requests || [];
   const summary = dashboard?.summary || {};
@@ -2047,7 +2416,24 @@ function AppInner() {
   return (
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
-      <Sidebar active={activeNav} onNav={(id) => { setActiveNav(id); setDrawerOpen(false); setRevealedKey(''); setApikeyNotice(''); setTeamNotice(''); }} session={session} intakeCount={summary.received_24h ?? 0} collapsed={collapsed} onToggleCollapse={toggleSidebar} isPlatformAdmin={isPlatformAdmin} onSignOut={signOut} />
+      <Sidebar
+        active={activeNav}
+        onNav={(id) => {
+          // Switching to a different top-level nav drops any open drawer +
+          // patient-detail selection. Patients page keeps its own ?patient= state.
+          navigateTo({ nav: id, patient_id: id === 'patients' ? undefined : '' });
+          setDrawerOpen(false);
+          setRevealedKey('');
+          setApikeyNotice('');
+          setTeamNotice('');
+        }}
+        session={session}
+        intakeCount={summary.received_24h ?? 0}
+        collapsed={collapsed}
+        onToggleCollapse={toggleSidebar}
+        isPlatformAdmin={isPlatformAdmin}
+        onSignOut={signOut}
+      />
 
       <main className="main">
         {viewOrgId && viewOrgId.name !== session.org_name ? (
@@ -2193,7 +2579,7 @@ function AppInner() {
                     <QueueHead />
                     <div>
                       {filtered.map((r) => (
-                        <QueueRow key={r.request_id} r={r} selected={selected?.request_id === r.request_id && drawerOpen} onSelect={openRequest} />
+                        <QueueRow key={r.request_id} r={r} selected={selected?.request_id === r.request_id && drawerOpen} onSelect={openRequest} onOpenPatient={(pid) => navigateTo({ nav: 'patients', patient_id: pid })} />
                       ))}
                       {!filtered.length && (
                         <div className="stub-empty" style={{ padding: '60px 24px' }}>
@@ -2233,6 +2619,11 @@ function AppInner() {
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
             {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
+              : activeNav === 'patients' ? (
+                  selectedPatientId
+                    ? <PatientDetail patient={patientDetail} loading={patientDetailLoading} error={patientDetailError} openedIds={openedPaIds} toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })} onBack={() => navigateTo({ patient_id: '' })} />
+                    : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} />
+                )
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
               : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
@@ -2243,7 +2634,17 @@ function AppInner() {
       </main>
 
       <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
-      <Drawer request={selected} siblings={siblings} onSelectSibling={openRequest} open={drawerOpen} onClose={() => setDrawerOpen(false)} paEvents={eventsForSelected} paEventsLoading={paEvents.loading} paEventsError={paEvents.error} />
+      <Drawer
+        request={selected}
+        siblings={siblings}
+        onSelectSibling={openRequest}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        paEvents={eventsForSelected}
+        paEventsLoading={paEvents.loading}
+        paEventsError={paEvents.error}
+        onOpenPatient={(pid) => { setDrawerOpen(false); navigateTo({ nav: 'patients', patient_id: pid }); }}
+      />
     </div>
   );
 }
