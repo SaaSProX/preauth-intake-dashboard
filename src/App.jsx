@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, createContext, useContext, useCallback, useRef } from 'react';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
@@ -359,8 +359,89 @@ function Conf({ level }) {
 function PlanTag({ plan }) {
   return <span className={`plan-tag ${planClass(plan)}`}>{plan}</span>;
 }
+// Toast plumbing — a tiny context so anywhere in the tree can fire a short
+// confirmation message in the bottom-right corner. No animation lib, just a
+// styled div that mounts for ~2.4s.
+const ToastContext = createContext({ show: () => {} });
+function useToast() { return useContext(ToastContext); }
+
+function ToastHost({ children }) {
+  const [toast, setToast] = useState(null);
+  const idRef = useRef(0);
+  const show = useCallback((message, kind = 'ok') => {
+    idRef.current += 1;
+    const id = idRef.current;
+    setToast({ id, message, kind });
+    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 2400);
+  }, []);
+  return (
+    <ToastContext.Provider value={{ show }}>
+      {children}
+      {toast ? (
+        <div role="status" aria-live="polite" style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+          padding: '10px 16px', borderRadius: 9,
+          background: toast.kind === 'ok' ? 'var(--ok-bg)' : 'var(--bad-bg)',
+          color: toast.kind === 'ok' ? 'var(--ok-ink)' : 'var(--bad-ink)',
+          border: `1px solid ${toast.kind === 'ok' ? 'var(--ok-line)' : 'var(--bad-line)'}`,
+          fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600,
+          boxShadow: '0 6px 24px rgba(0, 0, 0, 0.10)',
+          maxWidth: 360,
+        }}>{toast.message}</div>
+      ) : null}
+    </ToastContext.Provider>
+  );
+}
+
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext !== false) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_e) { /* fall through to fallback */ }
+  // Fallback for non-HTTPS / older browsers
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_e) {
+    return false;
+  }
+}
+
 function CodeBlock({ data, style }) {
-  return <div className="codeblock" style={style} dangerouslySetInnerHTML={{ __html: jsonPretty(data) }} />;
+  const { show } = useToast();
+  const onCopy = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
+    const ok = await copyToClipboard(text);
+    show(ok ? 'JSON copied to clipboard' : 'Copy failed — select & copy manually', ok ? 'ok' : 'bad');
+  };
+  return (
+    <div style={{ position: 'relative', ...style }}>
+      <button
+        type="button"
+        onClick={onCopy}
+        title="Copy JSON to clipboard"
+        style={{
+          position: 'absolute', top: 6, right: 6, zIndex: 1,
+          background: 'var(--bg)', border: '1px solid var(--line)',
+          padding: '3px 9px', borderRadius: 6,
+          fontFamily: 'var(--mono)', fontSize: 10.5, fontWeight: 600,
+          cursor: 'pointer', color: 'var(--ink-2)',
+        }}
+      >Copy</button>
+      <div className="codeblock" dangerouslySetInnerHTML={{ __html: jsonPretty(data) }} />
+    </div>
+  );
 }
 function Html({ html, className, style }) {
   return <div className={className} style={style} dangerouslySetInnerHTML={{ __html: html }} />;
@@ -1299,6 +1380,14 @@ function Login({ email, setEmail, password, setPassword, onSubmit, error, loadin
    App
    ============================================================ */
 export default function App() {
+  return (
+    <ToastHost>
+      <AppInner />
+    </ToastHost>
+  );
+}
+
+function AppInner() {
   const [session, setSession] = useState(() => {
     const s = localStorage.getItem(STORAGE_KEY);
     return s ? JSON.parse(s) : null;
