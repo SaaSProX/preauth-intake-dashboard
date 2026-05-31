@@ -1177,13 +1177,92 @@ function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, p
 /* ============================================================
    Chrome: status bar, sidebar, ask bar
    ============================================================ */
-function StatusBar({ session, role, onRole, refreshedLabel }) {
+function orgInitials(name) {
+  return String(name || 'Organization').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+}
+function orgListFromResponse(orgs) {
+  if (!orgs) return [];
+  if (Array.isArray(orgs)) return orgs;
+  if (Array.isArray(orgs.orgs)) return orgs.orgs;
+  return [];
+}
+function StatusBar({ session, role, onRole, refreshedLabel, isPlatformAdmin, orgs, orgsLoading, orgsError, viewOrgId, onSelectOrg, onClearOrg, onLoadOrgs }) {
+  const [orgOpen, setOrgOpen] = useState(false);
+  const wrapRef = useRef(null);
   const org = session.org_name || 'Organization';
-  const short = org.split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
+  const currentOrg = viewOrgId?.name || org;
+  const short = orgInitials(currentOrg);
   const isAdmin = (session.role || 'member') === 'admin';
+  const orgRows = orgListFromResponse(orgs);
+  const visibleOrgRows = orgRows.filter((o) => String(o.name || '').toUpperCase() !== String(org || '').toUpperCase());
+  useEffect(() => {
+    if (!orgOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target)) setOrgOpen(false);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setOrgOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [orgOpen]);
+  const toggleOrgOpen = () => {
+    if (!isPlatformAdmin) return;
+    if (!orgs && !orgsLoading) onLoadOrgs?.();
+    setOrgOpen((v) => !v);
+  };
   return (
     <div className="statusbar">
-      <div className="sb-org"><span className="org-dot">{short}</span><b>{org}</b><span className="scope">org-scoped</span></div>
+      <div className="org-switcher" ref={wrapRef}>
+        <button
+          type="button"
+          className={`sb-org ${isPlatformAdmin ? 'switchable' : ''}`}
+          onClick={toggleOrgOpen}
+          aria-haspopup={isPlatformAdmin ? 'menu' : undefined}
+          aria-expanded={isPlatformAdmin ? orgOpen : undefined}
+          data-tip={isPlatformAdmin ? 'Switch between client organizations. Your SaaSPro admin account stays the same.' : undefined}
+          data-tip-pos="below"
+          data-tip-align="left"
+        >
+          <span className="org-dot">{short}</span>
+          <b>{currentOrg}</b>
+          <span className="scope">{isPlatformAdmin ? (viewOrgId ? 'client org' : 'platform org') : 'org-scoped'}</span>
+          {isPlatformAdmin ? <span className="scope-chev" aria-hidden="true">⌄</span> : null}
+        </button>
+        {isPlatformAdmin && orgOpen ? (
+          <div className="org-menu" role="menu">
+            <div className="org-menu-head">Switch organization</div>
+            <button
+              type="button"
+              className={`org-option ${!viewOrgId ? 'on' : ''}`}
+              onClick={() => { onClearOrg?.(); setOrgOpen(false); }}
+              role="menuitem"
+            >
+              <span className="org-dot">{orgInitials(org)}</span>
+              <span><b>{org}</b><small>Platform workspace</small></span>
+            </button>
+            {orgsLoading ? <div className="org-menu-note">Loading organizations…</div> : null}
+            {orgsError ? <div className="org-menu-note bad">{orgsError}</div> : null}
+            {visibleOrgRows.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={`org-option ${viewOrgId?.id === o.id ? 'on' : ''}`}
+                onClick={() => { onSelectOrg?.(o); setOrgOpen(false); }}
+                role="menuitem"
+              >
+                <span className="org-dot">{orgInitials(o.name)}</span>
+                <span><b>{o.name}</b><small>{(o.requests || 0).toLocaleString()} requests · {(o.members || 0).toLocaleString()} members</small></span>
+              </button>
+            ))}
+            {!orgsLoading && !visibleOrgRows.length ? <div className="org-menu-note">No client organizations yet.</div> : null}
+          </div>
+        ) : null}
+      </div>
       <div className="sb-refresh" data-tip="Last successful fetch. Auto-refreshes every 15s. Click the refresh icon on the page header to force a refetch." data-tip-pos="below"><span className="spin" /> {refreshedLabel}</div>
       <div className="sb-right">
         {isAdmin ? (
@@ -2160,7 +2239,9 @@ function AppInner() {
     setHealthLoading(true);
     setHealthError('');
     try {
-      const data = await apiRequest('/auth/webhook-delivery-logs');
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      const data = await apiRequest('/auth/webhook-delivery-logs?' + qs.toString());
       setHealth(data);
     } catch (err) {
       setHealthError(err.message || 'Could not load delivery logs');
@@ -2175,6 +2256,7 @@ function AppInner() {
     setAuditError('');
     try {
       const params = new URLSearchParams();
+      if (viewOrgId) params.set('org_id', String(viewOrgId.id));
       const v = (q ?? auditQuery).trim();
       if (v) { if (v.includes('/')) params.set('checkin_id', v); else params.set('request_id', v); }
       const data = await apiRequest(`/auth/webhook-audit-trail?${params.toString()}`);
@@ -2416,17 +2498,28 @@ function AppInner() {
     setViewOrgId({ id: org.id, name: org.name });
     setActiveNav('intake');
     setSelectedId('');
+    setCurrentPage(1);
+    setPatientsPage(1);
+    setPatientDetail(null);
+    setPaEvents({ checkin_id: null, events: [], loading: false, error: '' });
     setDrawerOpen(false);
     setDashboard(null);
     urlSetOrg(org.id);
   }
-  function exitViewAs() {
+  function clearOrgSelection() {
     setViewOrgId(null);
-    setActiveNav('onboarding');
     setSelectedId('');
+    setCurrentPage(1);
+    setPatientsPage(1);
+    setPatientDetail(null);
+    setPaEvents({ checkin_id: null, events: [], loading: false, error: '' });
     setDrawerOpen(false);
     setDashboard(null);
     urlSetOrg(null);
+  }
+  function exitViewAs() {
+    clearOrgSelection();
+    setActiveNav('onboarding');
   }
 
   // After login: parse ?org= and restore drill-in. Non-platform-admins ignore it.
@@ -2435,6 +2528,7 @@ function AppInner() {
   useEffect(() => {
     if (!session?.token) return;
     const isSuper = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+    if (isSuper && !orgs && !orgsLoading) loadOrgs();
     if (!isSuper) {
       if (viewOrgId) { setViewOrgId(null); urlSetOrg(null); }
       return;
@@ -2497,14 +2591,14 @@ function AppInner() {
 
   useEffect(() => {
     if (!session?.token) return;
-    if (activeNav === 'health' && !health) loadHealth();
-    if (activeNav === 'audit' && !audit) loadAudit('');
+    if (activeNav === 'health') loadHealth();
+    if (activeNav === 'audit') loadAudit('');
     if (activeNav === 'team' && !team) loadTeam();
     if (activeNav === 'apikey' && !apikey) loadApiKey();
     if (activeNav === 'onboarding' && !orgs) loadOrgs();
     if (activeNav === 'patients' && !patients) loadPatients();
     // eslint-disable-next-line
-  }, [session?.token, activeNav]);
+  }, [session?.token, activeNav, viewOrgId]);
 
   // Refetch the patients list when the active filters change.
   useEffect(() => {
@@ -2582,6 +2676,7 @@ function AppInner() {
         qs.set('checkin_id', checkin);
         qs.set('include_payload', 'true');
         qs.set('limit', '25');
+        if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
         const data = await apiRequest('/auth/preauth-events?' + qs.toString());
         const events = asArr(data?.events).sort((a, b) => (_evtNum(a.event_sequence) || 0) - (_evtNum(b.event_sequence) || 0));
         if (!cancelled) setPaEvents({ checkin_id: checkin, events, loading: false, error: '' });
@@ -2591,7 +2686,7 @@ function AppInner() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line
-  }, [selected?.request_id]);
+  }, [selected?.request_id, viewOrgId]);
 
   // Fetch the full PA history for the patient whose drawer is open. Skips bare
   // 'unknown' / '—' so we don't try to lump unrelated parse-failure rows.
@@ -2651,7 +2746,20 @@ function AppInner() {
 
   return (
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
-      <StatusBar session={session} role={role} onRole={setRole} refreshedLabel={refreshedLabel} />
+      <StatusBar
+        session={session}
+        role={role}
+        onRole={setRole}
+        refreshedLabel={refreshedLabel}
+        isPlatformAdmin={isPlatformAdmin}
+        orgs={orgs}
+        orgsLoading={orgsLoading}
+        orgsError={orgsError}
+        viewOrgId={viewOrgId}
+        onSelectOrg={enterDrillIn}
+        onClearOrg={clearOrgSelection}
+        onLoadOrgs={loadOrgs}
+      />
       <Sidebar
         active={activeNav}
         onNav={(id) => {
@@ -2843,7 +2951,7 @@ function AppInner() {
           </section>
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
-            {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
+            {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={viewOrgId?.name || session.org_name} />
               : activeNav === 'patients' ? (
                   selectedPatientId
                     ? <PatientDetail

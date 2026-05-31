@@ -104,10 +104,20 @@ img, svg { display: block; }
   white-space: nowrap;
 }
 .statusbar > * { white-space: nowrap; }
+.org-switcher { position: relative; min-width: 0; }
 .statusbar .sb-org {
   display: flex; align-items: center; gap: 8px;
   color: var(--ink);
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 6px;
+  margin-left: -6px;
+  border-radius: 7px;
 }
+.statusbar .sb-org.switchable { cursor: pointer; }
+.statusbar .sb-org.switchable:hover { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-2); }
 .statusbar .sb-org .org-dot {
   width: 16px; height: 16px; border-radius: 5px;
   background: linear-gradient(135deg, var(--indigo), #8b6cf0);
@@ -119,6 +129,46 @@ img, svg { display: block; }
   color: var(--ink-3); font-size: 11px;
   padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line-2);
 }
+.statusbar .sb-org .scope-chev { color: var(--ink-3); font-size: 13px; transform: translateY(-1px); }
+.org-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 310px;
+  max-height: min(440px, calc(100vh - 64px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 22px 60px rgba(18, 24, 40, 0.16);
+  z-index: 70;
+  padding: 8px;
+}
+.org-menu-head {
+  padding: 7px 8px 9px;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.org-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: var(--mono);
+  text-align: left;
+}
+.org-option:hover { background: var(--bg-2); }
+.org-option.on { background: var(--tint); color: var(--indigo); box-shadow: inset 0 0 0 1px var(--indigo-soft); }
+.org-option .org-dot { flex: 0 0 auto; }
+.org-option b { display: block; font-size: 12.5px; font-weight: 600; }
+.org-option small { display: block; margin-top: 2px; color: var(--ink-3); font-size: 11px; }
+.org-menu-note { padding: 10px 8px; color: var(--ink-3); font-size: 12px; }
+.org-menu-note.bad { color: var(--bad); }
 .statusbar .sb-refresh { color: var(--ok-ink); display: flex; align-items: center; gap: 7px; }
 .statusbar .sb-refresh .spin {
   width: 11px; height: 11px; border-radius: 50%;
