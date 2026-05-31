@@ -1429,9 +1429,9 @@ function AskBar({ context }) {
     <div className="askbar-wrap">
       <form className="askbar" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
         <div className="ask-input">
-          <span className="caret">▌</span>
-          <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Ask me about ${context}…`} />
-          <span className="face">🫥</span>
+          {/* <span className="caret">▌</span> */}
+          {/* <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Ask me about ${context}…`} /> */}
+          {/* <span className="face">🫥</span> */}
           <button className="ask-send" type="submit">Ask</button>
         </div>
       </form>
