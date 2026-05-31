@@ -2177,7 +2177,7 @@ function Login({ email, setEmail, password, setPassword, onSubmit, error, loadin
           <img src="/saaspro-mark.png" alt="SaaSPro Labs" style={{ width: 40, height: 40, borderRadius: 9, display: 'block' }} />
           <div>
             <p className="eyebrow" style={{ margin: 0 }}>Saaspro Labs</p>
-            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, margin: '2px 0 0' }}>Pre-Auth Operations</h1>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, margin: '2px 0 0' }}>Operations</h1>
           </div>
         </div>
         <label style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
