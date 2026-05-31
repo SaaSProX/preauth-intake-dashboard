@@ -278,6 +278,51 @@ img, svg { display: block; }
 .metric .src { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line-2); padding-bottom: 1px; }
 .metric .src:hover { color: var(--indigo); border-color: var(--indigo-soft); }
 .metric .foot-icons { display: flex; gap: 10px; color: var(--ink-4); }
+.value-pair {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.value-half {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  padding: 14px;
+}
+.value-half span,
+.value-half small {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.value-half strong {
+  display: block;
+  margin: 8px 0 6px;
+  font-family: var(--mono);
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.value-half.approved { background: rgba(43, 138, 91, 0.08); border-color: rgba(43, 138, 91, 0.18); }
+.value-meter {
+  height: 8px;
+  margin-top: 16px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.value-meter i {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: inherit;
+  background: var(--ok);
+}
 
 /* mini KPI tile */
 .kpi { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 14px 16px; }
@@ -326,6 +371,119 @@ img, svg { display: block; }
 .selectish { font-family: var(--mono); font-size: 12.5px; padding: 8px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; }
 .statbtn { font-family: var(--mono); font-size: 12px; padding: 7px 11px; border: 1px solid var(--line-2); border-radius: 7px; color: var(--ink-3); background: var(--bg); }
 .statbtn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.date-range { position: relative; flex: 0 0 auto; }
+.date-range-btn {
+  height: 35px;
+  min-width: 210px;
+  max-width: min(330px, calc(100vw - 48px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+}
+.date-range-btn span:not(.chev) { overflow: hidden; text-overflow: ellipsis; }
+.date-range-btn.on { border-color: var(--indigo-soft); box-shadow: 0 0 0 3px var(--tint); }
+.date-range-btn .chev { color: var(--ink-3); font-size: 14px; transform: translateY(-1px); }
+.mini-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--indigo);
+  animation: spin .65s linear infinite;
+  flex: 0 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.date-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 24px 70px rgba(18, 24, 40, 0.18);
+  z-index: 45;
+  overflow: hidden;
+}
+.date-popover::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  transform: translateX(-50%) rotate(45deg);
+}
+.date-loading {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--tint);
+  color: var(--indigo);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.range-presets { position: relative; padding: 8px 0; }
+.range-presets button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 9px 18px;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+}
+.range-presets button:hover { background: var(--bg-2); color: var(--ink); }
+.custom-range {
+  border-top: 1px solid var(--line);
+  padding: 14px 18px 18px;
+  background: var(--bg);
+}
+.custom-range-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  color: var(--ink-2);
+  margin-bottom: 12px;
+}
+.custom-range-head span { color: var(--ink); font-size: 14px; }
+.custom-range-head b { font-size: 12.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
+.custom-range-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.custom-range-inputs input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  padding: 8px 9px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
 
 /* ============================================================
    DETAIL PANEL / DRAWER
