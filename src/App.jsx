@@ -2161,9 +2161,38 @@ function AppInner() {
     } catch (_e) { /* non-blocking */ }
     // 2. Make sure every PA row is expanded so the printout includes all detail.
     setOpenedPaIds(new Set((patientDetail.requests || []).map((r) => r.request_id)));
-    // 3. Wait for the render to settle, then trigger the browser print dialog.
-    //    The user picks "Save as PDF" from there. The print stylesheet hides
-    //    chrome and reveals the audit banner.
+    // 3. Set document.title to drive the "Save as PDF" filename. Browsers use
+    //    document.title as the suggested name in the print → save dialog. We
+    //    want PatientName_OrgName — and the org is the *patient's* org (the
+    //    HMO the PAs belong to), never SaaSPro even when a platform admin is
+    //    drilled in.
+    // Take the first request that actually has a patient_name. Some rows
+    // come from the queue without the enrollee name populated, so we don't
+    // want to fall back to the raw patient_id if there's a real name elsewhere
+    // in the history.
+    const namedReq = (patientDetail.requests || []).find((r) => r && r.patient_name && r.patient_name.trim());
+    const rawName = (namedReq && namedReq.patient_name) || patientDetail.patient_id || 'patient';
+    // The patient belongs to whichever org the platform admin is drilled
+    // into; if no drill-in then it's the operator's own org. Either way it's
+    // the patient's HMO, not the platform.
+    const rawOrg = viewOrgId?.name || session.org_name || 'org';
+    const sanitize = (s) => String(s)
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')   // strip accents
+      .replace(/[^A-Za-z0-9 _-]+/g, '')                    // drop punctuation
+      .trim().replace(/\s+/g, '_')                          // spaces → _
+      .slice(0, 80) || 'untitled';
+    const filename = `${sanitize(rawName)}_${sanitize(rawOrg)}`;
+    const originalTitle = document.title;
+    document.title = filename;
+    const restoreTitle = () => {
+      document.title = originalTitle;
+      window.removeEventListener('afterprint', restoreTitle);
+    };
+    window.addEventListener('afterprint', restoreTitle);
+    // Belt-and-braces: also restore after a delay in case afterprint never
+    // fires (some browsers / cancelled dialogs swallow it).
+    setTimeout(restoreTitle, 30_000);
+    // 4. Wait for the render to settle, then trigger the browser print dialog.
     await new Promise((r) => setTimeout(r, 200));
     window.print();
   }
