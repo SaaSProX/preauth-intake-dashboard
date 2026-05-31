@@ -1400,13 +1400,84 @@ export default function App() {
     setDrawerOpen(false);
     setViewOrgId(null);
   }
+  // URL ⇄ viewOrgId helpers. The drill-in target lives in `?org=N` so a
+  // hard reload, copy/paste URL, or browser back/forward restores it.
+  function urlSetOrg(orgId) {
+    const params = new URLSearchParams(window.location.search);
+    if (orgId == null) params.delete('org'); else params.set('org', String(orgId));
+    const qs = params.toString();
+    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.pushState({}, '', next);
+    }
+  }
+  function enterDrillIn(org) {
+    setViewOrgId({ id: org.id, name: org.name });
+    setActiveNav('intake');
+    setSelectedId('');
+    setDrawerOpen(false);
+    setDashboard(null);
+    urlSetOrg(org.id);
+  }
   function exitViewAs() {
     setViewOrgId(null);
     setActiveNav('onboarding');
     setSelectedId('');
     setDrawerOpen(false);
     setDashboard(null);
+    urlSetOrg(null);
   }
+
+  // After login: parse ?org= and restore drill-in. Non-super-admins ignore it.
+  // The org name is resolved from the loaded orgs list, or shows '…' until
+  // the list lands. Also fires loadOrgs if the list isn't loaded yet.
+  useEffect(() => {
+    if (!session?.token) return;
+    const isSuper = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+    if (!isSuper) {
+      if (viewOrgId) { setViewOrgId(null); urlSetOrg(null); }
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const want = params.get('org');
+    if (!want) {
+      if (viewOrgId) setViewOrgId(null);
+      return;
+    }
+    const wantId = Number(want);
+    if (!Number.isFinite(wantId)) return;
+    const list = (orgs && Array.isArray(orgs.orgs)) ? orgs.orgs : (Array.isArray(orgs) ? orgs : []);
+    const match = list.find((o) => o.id === wantId);
+    if (match) {
+      if (!viewOrgId || viewOrgId.id !== wantId || viewOrgId.name !== match.name) {
+        setViewOrgId({ id: wantId, name: match.name });
+      }
+    } else {
+      if (!viewOrgId || viewOrgId.id !== wantId) setViewOrgId({ id: wantId, name: '…' });
+      if (!orgs && !orgsLoading) loadOrgs();
+    }
+    // eslint-disable-next-line
+  }, [session?.token, session?.role, session?.org_name, orgs]);
+
+  // Browser back/forward: re-sync drill-in from the URL.
+  useEffect(() => {
+    if (!session?.token) return undefined;
+    const isSuper = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+    if (!isSuper) return undefined;
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      const want = params.get('org');
+      if (!want) { setViewOrgId(null); return; }
+      const wantId = Number(want);
+      if (!Number.isFinite(wantId)) return;
+      const list = (orgs && Array.isArray(orgs.orgs)) ? orgs.orgs : (Array.isArray(orgs) ? orgs : []);
+      const match = list.find((o) => o.id === wantId);
+      setViewOrgId({ id: wantId, name: match ? match.name : '…' });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line
+  }, [session?.token, session?.role, session?.org_name, orgs]);
 
   useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, planFilter, debouncedQuery]);
   // Debounce the search box: wait 300ms after last keystroke before fetching.
@@ -1685,7 +1756,7 @@ export default function App() {
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
               : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
-              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={(o) => { setViewOrgId({ id: o.id, name: o.name }); setActiveNav('intake'); setSelectedId(''); setDrawerOpen(false); setDashboard(null); }} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
+              : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isSuperAdmin={isSuperAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
               : <StubView id={activeNav} session={session} />}
           </section>
         )}
