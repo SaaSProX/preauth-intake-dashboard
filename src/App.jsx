@@ -1362,7 +1362,7 @@ function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, 
   );
 }
 
-function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack }) {
+function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, onDownloadPdf, session, orgName }) {
   const requests = (patient?.requests || []).map(mapRequest);
   // Aggregate the same shape /auth/patients returns, but client-side from the
   // full /patient-history payload (more accurate than the index aggregate).
@@ -1372,8 +1372,29 @@ function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack }
   const header = requests[0] || {};
   return (
     <>
-      <div style={{ marginBottom: 12 }}>
+      {/* Print-only audit banner — embedded in the PDF so the export
+          carries its own provenance. */}
+      <div className="print-only" style={{ borderBottom: '2px solid #000', paddingBottom: 10, marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+          <strong style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>SaaSPro · Pre-Auth Investigation Report</strong>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#444' }}>Confidential · Internal use only</span>
+        </div>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#222', lineHeight: 1.6 }}>
+          <div><b>Patient:</b> {patient?.requests?.[0]?.patient_name || 'Unnamed enrollee'} &nbsp;·&nbsp; <b>ID:</b> {patient?.patient_id || '—'}</div>
+          <div><b>Org:</b> {orgName || session?.org_name || '—'}</div>
+          <div><b>Downloaded by:</b> {session?.name || '—'} &lt;{session?.email || '—'}&gt; ({session?.role || 'admin'})</div>
+          <div><b>Downloaded at:</b> {new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'long' })}</div>
+        </div>
+      </div>
+      <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <button className="btn sm" onClick={onBack} data-tip="Return to the patients list." data-tip-align="left">← Back to patients</button>
+        <span style={{ flex: 1 }} />
+        <button
+          className="btn sm"
+          onClick={onDownloadPdf}
+          data-tip="Print the full report as a PDF. The output includes a header with your name, email, the org, and the timestamp for audit purposes."
+          data-tip-align="right"
+        >Download PDF</button>
       </div>
       <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 12, padding: '20px 22px', marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
@@ -1422,7 +1443,7 @@ function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack }
           const isOpen = openedIds.has(r.request_id);
           const ref = (r.display_request_id || '').split('/').slice(-1)[0] || r.request_id;
           return (
-            <div key={r.request_id} style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 9, overflow: 'hidden' }}>
+            <div key={r.request_id} className="pa-print-card" style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 9, overflow: 'hidden' }}>
               <button
                 onClick={() => toggleRow(r.request_id)}
                 style={{
@@ -2124,6 +2145,29 @@ function AppInner() {
       setPatientDetailError(err.message || 'Could not load patient');
     } finally { setPatientDetailLoading(false); }
   }
+  async function downloadPatientPdf() {
+    if (!patientDetail || !patientDetail.patient_id) return;
+    // 1. Record the export to the server-side audit trail (non-blocking — if
+    //    it fails we still let the operator print, but they'll see a toast).
+    try {
+      await apiRequest('/auth/audit/log-event', {
+        method: 'POST',
+        body: {
+          event_type: 'pdf_download',
+          target_kind: 'patient',
+          target_id: patientDetail.patient_id,
+          metadata: { pa_count: (patientDetail.requests || []).length },
+        },
+      });
+    } catch (_e) { /* non-blocking */ }
+    // 2. Make sure every PA row is expanded so the printout includes all detail.
+    setOpenedPaIds(new Set((patientDetail.requests || []).map((r) => r.request_id)));
+    // 3. Wait for the render to settle, then trigger the browser print dialog.
+    //    The user picks "Save as PDF" from there. The print stylesheet hides
+    //    chrome and reveals the audit banner.
+    await new Promise((r) => setTimeout(r, 200));
+    window.print();
+  }
   function navigateTo({ nav, patient_id }) {
     const params = new URLSearchParams(window.location.search);
     if (nav != null) {
@@ -2645,7 +2689,17 @@ function AppInner() {
             {activeNav === 'health' ? <HealthView data={health} loading={healthLoading} error={healthError} org={session.org_name} />
               : activeNav === 'patients' ? (
                   selectedPatientId
-                    ? <PatientDetail patient={patientDetail} loading={patientDetailLoading} error={patientDetailError} openedIds={openedPaIds} toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })} onBack={() => navigateTo({ patient_id: '' })} />
+                    ? <PatientDetail
+                        patient={patientDetail}
+                        loading={patientDetailLoading}
+                        error={patientDetailError}
+                        openedIds={openedPaIds}
+                        toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+                        onBack={() => navigateTo({ patient_id: '' })}
+                        onDownloadPdf={downloadPatientPdf}
+                        session={session}
+                        orgName={viewOrgId?.name || session.org_name}
+                      />
                     : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} onBack={() => navigateTo({ nav: 'intake', patient_id: '' })} />
                 )
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />

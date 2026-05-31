@@ -451,6 +451,55 @@ img, svg { display: block; }
 .role-member [data-admin-only] { display: none !important; }
 
 /* ============================================================
+   Print / PDF export — used when an operator downloads a patient
+   page as PDF. Hides chrome, expands collapsible details, ensures
+   page breaks land cleanly between PAs, and shows the audit header.
+   ============================================================ */
+.print-only { display: none; }
+@media print {
+  /* Hide chrome */
+  .statusbar, .side, .askbar-wrap, .drawer-scrim, .drawer,
+  .no-print, [data-no-print] { display: none !important; }
+
+  /* Reset layout — the app's grid template hides the main column when
+     the sidebar is gone, so override. */
+  body, .app, .main {
+    display: block !important;
+    grid-template-columns: 1fr !important;
+    background: #fff !important;
+    color: #000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .main { padding: 24px 0 0 !important; }
+
+  /* Show print-only blocks */
+  .print-only { display: block !important; }
+
+  /* Force every <details> to be open in print */
+  details > summary { list-style: none; }
+  details:not([open]) > *:not(summary) { display: revert !important; }
+  details { open: true; }
+
+  /* Don't split a PA card across pages if we can avoid it */
+  .pa-print-card { page-break-inside: avoid; break-inside: avoid; }
+  .pa-print-card + .pa-print-card { page-break-before: always; }
+
+  /* Tone down decoration */
+  .toolbar, .qhead, .drawer-scrim { display: none !important; }
+  .ro-banner { background: #f5f5f5 !important; color: #000 !important; border-color: #ccc !important; }
+
+  /* Hide tooltips entirely */
+  [data-tip]::after { display: none !important; }
+
+  /* Page setup */
+  @page {
+    size: A4;
+    margin: 16mm 14mm 18mm 14mm;
+  }
+}
+
+/* ============================================================
    Tooltips — CSS-only, attribute-driven. Add data-tip="text"
    to any element. 300ms delay so they don't pop while brushing
    past; 11px mono to stay subtle.
