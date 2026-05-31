@@ -2515,10 +2515,10 @@ function AppInner() {
           date_from: dateFrom || null,
           date_to: dateTo || null,
           q: (debouncedQuery || query || '').trim() || null,
-          limit: 500,
+          limit: 20,
         },
       });
-      setRetryNotice(`${res.queued_count || 0} pending request${res.queued_count === 1 ? '' : 's'} queued for retry`);
+      setRetryNotice(`${res.queued_count || 0} pending request${res.queued_count === 1 ? '' : 's'} queued for retry. Run another batch if more remain.`);
       await loadDashboard({ silent: true });
     } catch (err) {
       setRetryError(err.message || 'Could not retry pending requests');
@@ -3144,10 +3144,10 @@ function AppInner() {
                     className="btn"
                     disabled={retryAllBusy || loading || (retryableSummaryCount === 0 && visibleRetryableCount === 0)}
                     onClick={retryAllPendingPreauths}
-                    data-tip="Re-run all pending, processing, received, and error PAs in the current date/search window."
+                    data-tip="Safely re-run up to 20 pending, processing, received, and error PAs in the current date/search window."
                     data-tip-pos="below"
                   >
-                    {retryAllBusy ? 'Retrying pending…' : 'Retry all pending'}
+                    {retryAllBusy ? 'Retrying batch…' : 'Retry pending batch'}
                   </button>
                 ) : null}
                 <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => loadDashboard()}><IconRefresh /></button>
