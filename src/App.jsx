@@ -475,9 +475,35 @@ function DetailsGrid({ r }) {
 }
 function LineItems({ r }) {
   if (!r.items || !r.items.length) return null;
+  const cov = r.coverage;
+  const coveragePass = cov ? ((cov.denied || []).length === 0) : null;
   return (
     <div>
       <div className="sec-h">Requested items <span className="n">{r.items.length}</span></div>
+      {cov && cov.reason ? (
+        <div style={{
+          marginTop: 8,
+          padding: '10px 12px',
+          background: coveragePass ? 'var(--ok-bg)' : 'var(--bad-bg)',
+          border: `1px solid ${coveragePass ? 'var(--ok-line)' : 'var(--bad-line)'}`,
+          color: coveragePass ? 'var(--ok-ink)' : 'var(--bad-ink)',
+          borderRadius: 9,
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+              Agent 2 · Plan &amp; Coverage
+            </span>
+            <span className="mono" style={{ fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 999, background: 'rgba(0,0,0,0.05)' }}>
+              {coveragePass ? 'PASS' : 'FAIL'}
+            </span>
+            {(cov.covered || []).length ? <span className="mono" style={{ fontSize: 11, opacity: 0.8 }}>{(cov.covered || []).length} covered</span> : null}
+            {(cov.denied || []).length ? <span className="mono" style={{ fontSize: 11, opacity: 0.8 }}>{(cov.denied || []).length} denied</span> : null}
+          </div>
+          <div>{cov.reason}</div>
+        </div>
+      ) : null}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
         {r.items.map((it, i) => {
           const total = it.unit * it.qty;
@@ -555,6 +581,99 @@ function LineItems({ r }) {
     </div>
   );
 }
+// Render the structured fields each agent produces, lifted out of raw JSON
+// so an operator can read a stage at a glance.
+function StageHighlights({ stage }) {
+  const r = asObj(stage.result);
+  if (!r || !Object.keys(r).length) return null;
+  const chip = (label, ok) => (
+    <span style={{
+      fontFamily: 'var(--mono)', fontSize: 11, padding: '2px 8px', borderRadius: 999,
+      background: ok ? 'var(--ok-bg)' : 'var(--bad-bg)',
+      color: ok ? 'var(--ok-ink)' : 'var(--bad-ink)',
+      border: `1px solid ${ok ? 'var(--ok-line)' : 'var(--bad-line)'}`,
+    }}>{ok ? '✓' : '✕'} {label}</span>
+  );
+  const bar = (used, limit) => {
+    const pct = limit > 0 ? Math.min(100, (Number(used) || 0) / limit * 100) : 0;
+    const over = (Number(used) || 0) > limit;
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px', alignItems: 'center', gap: 8, fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        <span className="muted">{fmtNGN(used || 0)}</span>
+        <span style={{ height: 6, background: 'var(--bg-3)', borderRadius: 99, overflow: 'hidden' }}>
+          <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: over ? 'var(--bad)' : 'var(--ok)', borderRadius: 99 }} />
+        </span>
+        <span className="muted" style={{ textAlign: 'right' }}>of {fmtNGN(limit || 0)}</span>
+      </div>
+    );
+  };
+  if (stage.n === 1) {
+    const c = asObj(r.checks);
+    const items = [
+      ['Active', c.status_active],
+      ['Not expired', c.not_expired],
+      ['Age OK', c.age_ok],
+      ['Enrollment valid', c.enrollment_valid],
+    ].filter(([, v]) => v !== undefined);
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        {items.map(([k, v]) => <span key={k}>{chip(k, !!v)}</span>)}
+        {r.is_platinum_plus ? <span className="mono" style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: 'var(--tint)', color: 'var(--indigo)', border: '1px solid var(--indigo-soft)' }}>Platinum+</span> : null}
+      </div>
+    );
+  }
+  if (stage.n === 2) {
+    const covered = asArr(r.covered_items).length;
+    const denied = asArr(r.denied_items).length;
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        {r.benefit_category ? <span className="muted">Category: <b style={{ color: 'var(--ink)' }}>{r.benefit_category}</b></span> : null}
+        {covered ? <span style={{ marginLeft: 4 }}>{chip(`${covered} covered`, true)}</span> : null}
+        {denied ? <span>{chip(`${denied} denied`, false)}</span> : null}
+        {r.exclusion_triggered ? <span style={{ color: 'var(--bad-ink)' }}>· Exclusion: {r.exclusion_detail || 'yes'}</span> : null}
+        {r.waiting_period_issue ? <span style={{ color: 'var(--bad-ink)' }}>· Waiting period: {r.waiting_period_detail || 'yes'}</span> : null}
+        {r.plan_restriction ? <span style={{ color: 'var(--bad-ink)' }}>· Plan restriction</span> : null}
+      </div>
+    );
+  }
+  if (stage.n === 3) {
+    if (r.utilization_data_missing && r.bucket_used == null && r.bucket_limit == null) {
+      return (
+        <div style={{ marginTop: 6, fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--bad-ink)' }}>
+          Consumption data unavailable — agent skipped.
+        </div>
+      );
+    }
+    return (
+      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+        {r.bucket ? (
+          <div>
+            <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 4 }}>{r.bucket}{r.bucket_exceeded ? ' · exceeded' : ''}</div>
+            {bar(r.bucket_used, r.bucket_limit)}
+          </div>
+        ) : null}
+        <div>
+          <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 4 }}>Annual cap{r.annual_cap_exceeded ? ' · exceeded' : ''}</div>
+          {bar(r.annual_cap_used, r.annual_cap_limit)}
+        </div>
+        {r.estimated_cost ? <div className="muted mono" style={{ fontSize: 11.5 }}>This request: <b style={{ color: 'var(--ink)' }}>{fmtNGN(r.estimated_cost)}</b></div> : null}
+      </div>
+    );
+  }
+  if (stage.n === 4) {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        {r.decision ? <span className="mono" style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--bg-3)', color: 'var(--ink)', border: '1px solid var(--line)', fontWeight: 600 }}>{r.decision}</span> : null}
+        {r.confidence ? <span className="muted">Confidence: <b style={{ color: 'var(--ink)' }}>{r.confidence}</b></span> : null}
+        {r.amount_approved != null ? <span className="muted">Approved: <b style={{ color: 'var(--ink)' }}>{fmtNGNfull(r.amount_approved)}</b></span> : null}
+        {r.no_preauth_required ? <span style={{ color: 'var(--ok-ink)' }}>· No PA required</span> : null}
+        {asArr(r.flags).length ? <span style={{ color: 'var(--bad-ink)' }}>· Flags: {asArr(r.flags).join('; ')}</span> : null}
+      </div>
+    );
+  }
+  return null;
+}
+
 function AgentTimeline({ r }) {
   if (!r.stages || !r.stages.length) {
     return <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>Pipeline has not started for this request{r.status === 'received' ? ' — awaiting auto-decision.' : '.'}</div>;
@@ -565,6 +684,7 @@ function AgentTimeline({ r }) {
         const cls = s.status === 'processing' ? 'skip' : s.status;
         const node = s.status === 'pass' ? '✓' : s.status === 'fail' ? '✕' : s.n;
         const statTxt = s.status === 'processing' ? 'running' : s.status;
+        const reason = asObj(s.result).reason || asObj(s.result).reasoning || asObj(s.result).denial_reason || asObj(s.result).escalation_reason || null;
         return (
           <div className={`stage ${cls}`} key={i}>
             <div className="node">{node}</div>
@@ -574,7 +694,9 @@ function AgentTimeline({ r }) {
               {s.time ? <span className="s-time">{s.time}</span> : null}
             </div>
             <p className="s-sum">{STAGE_Q[s.name] || ''}</p>
-            {s.result ? <div className="s-raw"><details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details></div> : null}
+            {reason ? <p style={{ fontSize: 12.5, color: 'var(--ink)', margin: '6px 0 0', lineHeight: 1.55 }}>{reason}</p> : null}
+            <StageHighlights stage={s} />
+            {s.result ? <div className="s-raw" style={{ marginTop: 8 }}><details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details></div> : null}
           </div>
         );
       })}
