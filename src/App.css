@@ -316,6 +316,9 @@ img, svg { display: block; }
 .metric .big { font-family: var(--mono); font-size: 40px; letter-spacing: -.03em; font-weight: 500; margin: 14px 0 0; line-height: 1; }
 .metric .big small { font-size: 15px; color: var(--ink-3); letter-spacing: 0; }
 .metric .chart-wrap { margin-top: 16px; }
+.chart-hit .chart-tooltip { opacity: 0; transition: opacity .12s ease; pointer-events: none; }
+.chart-hit:hover .chart-tooltip { opacity: 1; }
+.chart-hit:hover .chart-bar, .chart-hit:hover .chart-point { filter: brightness(.88); }
 .metric .insight-sep {
   margin: 18px 0 14px; display: flex; align-items: center; gap: 10px;
   font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: .02em;

@@ -128,6 +128,19 @@ function formatChartValue(value, { prefix = '', suffix = '' } = {}) {
   const formatted = Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
   return `${prefix}${formatted}${suffix}`;
 }
+function chartTooltip(label, value, x, y, { w = 560, padRight = 8, prefix = '', suffix = '' } = {}) {
+  const tipW = 142;
+  const tipH = 38;
+  const tipX = Math.max(8, Math.min(w - padRight - tipW, x - tipW / 2));
+  const tipY = Math.max(6, y - tipH - 10);
+  return `
+    <g class="chart-tooltip" transform="translate(${tipX.toFixed(1)} ${tipY.toFixed(1)})">
+      <rect width="${tipW}" height="${tipH}" rx="7" fill="var(--ink)" opacity="0.96"/>
+      <text x="10" y="16" font-family="var(--mono)" font-size="11" font-weight="600" fill="#fff">${escapeHtml(formatChartValue(value, { prefix, suffix }))}</text>
+      <text x="10" y="30" font-family="var(--mono)" font-size="9.5" fill="rgba(255,255,255,.72)">${escapeHtml(label)}</text>
+    </g>
+  `;
+}
 
 /* ============================================================
    SVG chart builders (ported from the prototype, return HTML strings)
@@ -145,8 +158,8 @@ function chartBars(data, { w = 560, h = 200, max = null, accent = 'var(--ink-3)'
     const x = pad.l + i * bw + (bw - barW) / 2;
     const y = pad.t + ih - bh;
     const label = tooltipLabels?.[i] || labels?.[i] || `Point ${i + 1}`;
-    const title = escapeHtml(`${label}: ${formatChartValue(v, { prefix, suffix })}`);
-    bars += `<g><title>${title}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${accent}"/><rect x="${(pad.l + i * bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent"/></g>`;
+    const cx = x + barW / 2;
+    bars += `<g class="chart-hit"><rect class="chart-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${accent}"/><rect x="${(pad.l + i * bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent" pointer-events="all"/>${chartTooltip(label, v, cx, y, { w, padRight: pad.r, prefix, suffix })}</g>`;
   });
   let grid = '', ylab = '';
   const ticks = 4;
@@ -194,8 +207,8 @@ function chartLine(data, { w = 560, h = 200, accent = 'var(--indigo)', fill = tr
     <path d="${d}" fill="none" stroke="${accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     ${data.map((v, i) => {
       const label = tooltipLabels?.[i] || labels?.[i] || `Point ${i + 1}`;
-      const title = escapeHtml(`${label}: ${formatChartValue(v, { prefix, suffix })}`);
-      return `<g><title>${title}</title><circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="${i === data.length - 1 ? '3.5' : '2.5'}" fill="${accent}" opacity="${i === data.length - 1 ? '1' : '0.55'}"/><circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="10" fill="transparent"/></g>`;
+      const hitW = i === 0 || i === data.length - 1 ? Math.max(20, iw / (data.length - 1) / 2) : Math.max(24, iw / (data.length - 1));
+      return `<g class="chart-hit"><rect x="${(xs(i) - hitW / 2).toFixed(1)}" y="${pad.t}" width="${hitW.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent" pointer-events="all"/><circle class="chart-point" cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="${i === data.length - 1 ? '3.5' : '2.5'}" fill="${accent}" opacity="${i === data.length - 1 ? '1' : '0.55'}"/>${chartTooltip(label, v, xs(i), ys(v), { w, padRight: pad.r, prefix, suffix })}</g>`;
     }).join('')}
     ${ylab}${xlab}</svg>`;
 }
