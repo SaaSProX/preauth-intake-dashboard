@@ -1455,6 +1455,13 @@ function HealthView({ data, loading, error, org }) {
     return { label: 'valid', color: 'var(--ok)' };
   };
   const shortId = (l) => (l.checkin_id ? l.checkin_id.split('/').slice(-1)[0] : (l.delivery_id || '').slice(0, 8));
+  const senderName = (l) => l.api_client_name || (l.api_key_hint ? `Unknown key ${l.api_key_hint}` : 'Unknown sender');
+  const dbStatusLabel = (status) => {
+    if (['db_upsert_success', 'event_saved_latest_state_updated'].includes(status)) return 'saved';
+    if (status === 'duplicate_event_seen') return 'dupe';
+    if (status === 'db_insert_failed') return 'failed';
+    return '—';
+  };
   return (
     <>
       <div className="stub-head"><h1 className="page-title">Integration Health</h1></div>
@@ -1478,18 +1485,19 @@ function HealthView({ data, loading, error, org }) {
           <p className="move-p">{d.auth_failed || 0} auth failures and {d.payload_invalid || 0} invalid payloads in the window. {d.duplicate_event_attempts || 0} duplicate events and {d.repeated_checkin_attempts || 0} repeated check-ins were de-duplicated.</p>
         </div>
         <div className="metric">
-          <h3>Recent delivery attempts</h3><p className="desc">Including rejected deliveries, for observability</p>
+          <h3>Recent delivery attempts</h3><p className="desc">Including sender, auth result, and DB status</p>
           <div className="chart-wrap" style={{ marginTop: 14 }}>
             {logs.length === 0 ? (
               <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '16px 0' }}>{loading ? 'Loading…' : 'No deliveries in range.'}</div>
             ) : logs.slice(0, 8).map((l) => {
               const m = attemptMeta(l);
               return (
-                <div key={l.delivery_id} style={{ display: 'grid', gridTemplateColumns: '96px 1fr 80px 64px 44px', gap: 10, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: '11.5px', padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
+                <div key={l.delivery_id} style={{ display: 'grid', gridTemplateColumns: '96px minmax(0,1.2fr) 74px 78px 58px 44px', gap: 10, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: '11.5px', padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
                   <span title={l.checkin_id || l.delivery_id}>{shortId(l)}</span>
+                  <span className="muted" title={senderName(l)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{senderName(l)}</span>
                   <span className="muted">{l.created_at ? timeAgo(l.created_at) : '—'}</span>
                   <span style={{ color: m.color }}>{m.label}</span>
-                  <span className="muted">{l.db_insert_status === 'db_upsert_success' ? 'saved' : (l.db_insert_status === 'db_insert_failed' ? 'failed' : '—')}</span>
+                  <span className="muted">{dbStatusLabel(l.db_insert_status)}</span>
                   <b>{l.http_status_returned ?? '—'}</b>
                 </div>
               );
