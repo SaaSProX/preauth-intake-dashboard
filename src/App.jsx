@@ -430,9 +430,11 @@ function jsonPretty(obj) {
 /* ============================================================
    Small presentational pieces
    ============================================================ */
-function Pill({ status }) {
+function Pill({ status, tipAlign }) {
   const m = STATUS_META[status] || STATUS_META.pending;
-  return <span className={`pill ${m.cls}`} data-tip={m.help}><span className="dot" />{m.label}</span>;
+  // Pills sit at the right edge of queue rows + most drawer cards, so
+  // right-align the tooltip by default to avoid clipping the viewport.
+  return <span className={`pill ${m.cls}`} data-tip={m.help} data-tip-align={tipAlign || 'right'}><span className="dot" />{m.label}</span>;
 }
 function Conf({ level }) {
   if (!level) return null;
@@ -440,6 +442,7 @@ function Conf({ level }) {
     <span
       className={`conf ${String(level).toLowerCase()}`}
       data-tip="The agent’s self-assessment of how confident it is in this decision. Not a probability — a coarse signal."
+      data-tip-align="right"
     >
       <span className="bars"><i /><i /><i /></span><b>{level}</b> confidence
     </span>
@@ -542,7 +545,7 @@ function Html({ html, className, style }) {
 function MetricCard({ title, desc, big, chartHtml, moveH, moveP, tip }) {
   return (
     <div className="metric">
-      <h3 data-tip={tip} data-tip-align="left">{title}</h3>
+      <h3 data-tip={tip} data-tip-align="left" data-tip-pos="below">{title}</h3>
       <p className="desc">{desc}</p>
       {big ? <div className="big" dangerouslySetInnerHTML={{ __html: big }} /> : null}
       <div className="chart-wrap">
@@ -1169,6 +1172,9 @@ function HealthView({ data, loading, error, org }) {
     <>
       <div className="stub-head"><h1 className="page-title">Integration Health</h1></div>
       <p className="page-sub">Inbound webhook deliveries from <b>{org}</b> · <span className="muted">latest {d.latest_received_at ? timeAgo(d.latest_received_at) : '—'}</span></p>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Every webhook the HMO sends — successful or not — is logged here. Use this when {org === 'AMAN' ? 'Aman' : 'your HMO'} says &ldquo;I sent it but you didn&rsquo;t receive it&rdquo;: failed deliveries (bad auth, malformed payload, parse errors) appear here even when they never become a PA. The queue and the Patients page only show requests that landed successfully — this page is the source of truth for the delivery layer.
+      </p>
       {error ? <div className="ro-banner" style={{ display: 'flex', marginTop: 18, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
       <div className="kpi-strip section-gap" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
         <KpiTile label="Deliveries received" val={(d.total_received || 0).toLocaleString()} sub={`${d.latest_received_at ? timeAgo(d.latest_received_at) : '—'} latest`} />
@@ -1252,7 +1258,7 @@ function OutcomePills({ counts, size = 'sm' }) {
   );
 }
 
-function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, setOutcome, page, setPage, onOpenPatient }) {
+function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, setOutcome, page, setPage, onOpenPatient, onBack }) {
   const list = (data && data.patients) || [];
   const meta = data?.meta || {};
   const pagination = data?.pagination || {};
@@ -1261,6 +1267,11 @@ function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, 
   const dwFrom = fmt(dw.earliest); const dwTo = fmt(dw.latest);
   return (
     <>
+      {onBack ? (
+        <div style={{ marginBottom: 12 }}>
+          <button className="btn sm" onClick={onBack} data-tip="Return to the Pre-Auth Intake queue." data-tip-align="left">← Back to Pre-Auth Intake</button>
+        </div>
+      ) : null}
       <div className="page-head">
         <div>
           <h1 className="page-title">Patients</h1>
@@ -1271,6 +1282,9 @@ function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, 
           </p>
         </div>
       </div>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Investigate at the enrollee level. Each row groups every PA we've received for one patient — sort by volume to spot frequent requesters, by value to flag high spend, or by denials to surface possible misuse. Click any row for the patient's full timeline.
+      </p>
       <div className="toolbar" style={{ marginTop: 18, marginBottom: 14, flexWrap: 'wrap' }}>
         <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }} data-tip="Search across patient name, patient ID, and insurance number." data-tip-pos="below" data-tip-align="left">
           <IconSearch />
@@ -1466,6 +1480,9 @@ function AuditView({ data, loading, error, query, setQuery, onTrace }) {
     <>
       <div className="stub-head"><h1 className="page-title">Audit Trail</h1></div>
       <p className="page-sub">Trace one event end-to-end: <span className="muted">delivery → stored request → agent decision</span></p>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Paste an event ID, check-in ID, or request ID and we replay it across the webhook delivery layer + the agent pipeline. Use this for &ldquo;the provider says they sent us X — what did we actually do with it?&rdquo; questions, compliance audits, or chasing down a specific failure. It catches things the queue can&rsquo;t — failed deliveries that never became a PA.
+      </p>
       <div className="toolbar section-gap">
         <div className="search" style={{ maxWidth: 420 }}>
           <span className="muted mono" style={{ fontSize: 12 }}>trace</span>
@@ -1613,6 +1630,9 @@ function OnboardingView({ data, loading, error, isPlatformAdmin, orgName, setOrg
     <>
       <div className="stub-head"><h1 className="page-title">Onboarding</h1></div>
       <p className="page-sub">Manage client organizations · <span className="muted">platform-only view</span></p>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.55, color: 'var(--ink-2)', margin: '10px 0 0', maxWidth: 760 }}>
+        Spin up a new HMO client, invite their first admin, or drill into any existing client&rsquo;s queue read-only. This page is visible only to admins of the SaaSPro org — client admins manage their own org&rsquo;s team + keys from their respective Team and API Key pages.
+      </p>
       <div className="kpi-strip section-gap" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <KpiTile label="Client organizations" val={orgs.length.toLocaleString()} sub={`${totalPending} pending invites`} />
         <KpiTile label="Total members" val={totalMembers.toLocaleString()} sub="across all orgs" />
@@ -2094,7 +2114,11 @@ function AppInner() {
       qs.set('patient_id', pid);
       if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
       const data = await apiRequest('/auth/patient-history?' + qs.toString());
-      setPatientDetail({ patient_id: data.patient_id || pid, requests: data.requests || [] });
+      const requests = data.requests || [];
+      setPatientDetail({ patient_id: data.patient_id || pid, requests });
+      // Default-expand every PA row so the operator sees all decisions at once
+      // (their explicit ask). They can collapse individual rows from there.
+      setOpenedPaIds(new Set(requests.map((r) => r.request_id)));
     } catch (err) {
       setPatientDetail({ patient_id: pid, requests: [] });
       setPatientDetailError(err.message || 'Could not load patient');
@@ -2622,7 +2646,7 @@ function AppInner() {
               : activeNav === 'patients' ? (
                   selectedPatientId
                     ? <PatientDetail patient={patientDetail} loading={patientDetailLoading} error={patientDetailError} openedIds={openedPaIds} toggleRow={(id) => setOpenedPaIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })} onBack={() => navigateTo({ patient_id: '' })} />
-                    : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} />
+                    : <PatientsIndex data={patients} loading={patientsLoading} error={patientsError} q={patientsQuery} setQ={setPatientsQuery} sort={patientsSort} setSort={setPatientsSort} outcome={patientsOutcome} setOutcome={setPatientsOutcome} page={patientsPage} setPage={setPatientsPage} onOpenPatient={(pid) => navigateTo({ patient_id: pid })} onBack={() => navigateTo({ nav: 'intake', patient_id: '' })} />
                 )
               : activeNav === 'audit' ? <AuditView data={audit} loading={auditLoading} error={auditError} query={auditQuery} setQuery={setAuditQuery} onTrace={() => loadAudit()} />
               : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />

@@ -475,7 +475,7 @@ img, svg { display: block; }
   text-transform: none;
   white-space: pre-wrap;
   width: max-content;
-  max-width: 280px;
+  max-width: min(260px, calc(100vw - 32px));
   z-index: 1000;
   pointer-events: none;
   box-shadow: 0 4px 12px rgba(11, 15, 28, 0.08);
