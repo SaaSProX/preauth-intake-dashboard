@@ -293,7 +293,45 @@ function mapRequest(r) {
     raw_payload: r.raw_payload,
     extracted_fields: r.extracted_fields,
     patient_pa_count: r.patient_pa_count || 0,
+    coverage: (() => {
+      const ag2 = asObj(asObj(r.agent_result).agent2);
+      if (!ag2 || (!ag2.covered_items && !ag2.denied_items)) return null;
+      return {
+        covered: asArr(ag2.covered_items).map(String),
+        denied: asArr(ag2.denied_items).map(String),
+        reason: ag2.reason || null,
+        exclusion_detail: ag2.exclusion_detail || null,
+        plan_restriction_detail: ag2.plan_restriction_detail || null,
+        waiting_period_detail: ag2.waiting_period_detail || null,
+      };
+    })(),
   };
+}
+
+// Match a line item name against Agent 2's covered/denied lists. The agent
+// often appends a reason after an em/en-dash on denied items, e.g.
+// "HbsAg — Hepatitis treatment excluded".
+function findCoverageVerdict(itemName, coverage) {
+  if (!coverage || !itemName) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const ln = norm(itemName);
+  if (!ln) return null;
+  const stem = ln.split(' ').slice(0, 2).join(' ');
+  for (const d of (coverage.denied || [])) {
+    const nd = norm(d);
+    if (!nd) continue;
+    if (nd.startsWith(stem) || nd.includes(stem) || stem.includes(norm(d.split(/[—–\-]/)[0] || ''))) {
+      const parts = String(d).split(/\s*[—–]\s*|\s+-\s+/);
+      const reason = parts.length > 1 ? parts.slice(1).join(' — ') : (coverage.exclusion_detail || coverage.waiting_period_detail || coverage.plan_restriction_detail || coverage.reason || null);
+      return { verdict: 'denied', reason };
+    }
+  }
+  for (const c of (coverage.covered || [])) {
+    const nc = norm(c);
+    if (!nc) continue;
+    if (nc === ln || nc.includes(stem) || ln.includes(nc)) return { verdict: 'covered', reason: null };
+  }
+  return null;
 }
 function jsonPretty(obj) {
   if (obj == null) return '<span style="color:#6b7385">null</span>';
@@ -445,15 +483,35 @@ function LineItems({ r }) {
           const total = it.unit * it.qty;
           const approved = Number(it.approved_cost) || 0;
           const hasApprovedField = it.approved_cost != null;
+          const verdict = findCoverageVerdict(it.name, r.coverage);
+          const verdictColor = verdict?.verdict === 'denied'
+            ? { bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' }
+            : { bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
           return (
             <details key={i} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9 }}>
-              <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: '1fr 60px 130px 16px', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+              <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: '1fr auto 60px 130px 16px', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
                 <div style={{ fontSize: 13 }}>{it.name}</div>
+                <div>
+                  {verdict ? (
+                    <span title={verdict.reason || ''} style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'var(--mono)' }}>
+                      {verdict.verdict}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>×{it.qty}</div>
                 <div className="mono" style={{ fontSize: 12, textAlign: 'right' }}>{fmtNGNfull(total)}</div>
                 <div style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 10, textAlign: 'right' }}>▾</div>
               </summary>
               <div style={{ padding: '12px 14px 14px', borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: '120px 1fr', rowGap: 6, columnGap: 12, fontSize: 12, fontFamily: 'var(--mono)' }}>
+                {verdict ? (
+                  <>
+                    <div className="muted">AI verdict</div>
+                    <div>
+                      <span style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase' }}>{verdict.verdict}</span>
+                      {verdict.reason ? <div style={{ marginTop: 6, color: 'var(--ink-2)', whiteSpace: 'normal' }}>{verdict.reason}</div> : null}
+                    </div>
+                  </>
+                ) : null}
                 <div className="muted">Unit cost</div><div>{fmtNGNfull(it.unit)}</div>
                 <div className="muted">Quantity</div><div>{it.qty}</div>
                 <div className="muted">Requested</div><div>{fmtNGNfull(total)}</div>
