@@ -615,6 +615,20 @@ function MetricCard({ title, desc, big, chartHtml, moveH, moveP, tip }) {
     </div>
   );
 }
+function LoadingOverlay({ show, label = 'Loading…' }) {
+  if (!show) return null;
+  return (
+    <div className="loading-overlay" role="status" aria-live="polite">
+      <div className="loading-card">
+        <span className="processing-ring" aria-hidden="true" />
+        <div>
+          <strong>{label}</strong>
+          <small>Fetching the latest records</small>
+        </div>
+      </div>
+    </div>
+  );
+}
 function ValuePairMetricCard({ received, approved, lineItems, eventCount }) {
   const safeReceived = Number(received || 0);
   const safeApproved = Number(approved || 0);
@@ -1551,7 +1565,8 @@ function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, 
         </div>
       </div>
       {error ? <div className="ro-banner" style={{ display: 'flex', marginBottom: 14, background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
-      <div className="queue">
+      <div className="queue loading-host">
+        <LoadingOverlay show={loading && !!list.length} label="Loading patients" />
         <div className="qhead" style={{ gridTemplateColumns: '1.6fr 70px 120px 120px 1.4fr 90px' }}>
           <span>Patient</span>
           <span data-tip="Number of pre-auth requests this patient has in this org.">PAs</span>
@@ -1592,8 +1607,8 @@ function PatientsIndex({ data, loading, error, q, setQ, sort, setSort, outcome, 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>
           <span>Page {pagination.page} of {pagination.total_pages} · {pagination.total} patients</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn sm" disabled={pagination.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
-            <button className="btn sm" disabled={pagination.page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}>Next ›</button>
+            <button className="btn sm" disabled={loading || pagination.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
+            <button className="btn sm" disabled={loading || pagination.page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}>Next ›</button>
           </div>
         </div>
       ) : null}
@@ -2928,7 +2943,8 @@ function AppInner() {
                     <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Request queue</h2>
                     <span className="muted mono" style={{ fontSize: 12 }}>{filtered.length} request{filtered.length === 1 ? '' : 's'}</span>
                   </div>
-                  <div className="queue">
+                  <div className="queue loading-host">
+                    <LoadingOverlay show={loading && !!requests.length} label="Loading pre-auths" />
                     <QueueHead />
                     <div>
                       {filtered.map((r) => (
@@ -2944,8 +2960,8 @@ function AppInner() {
                     {(dashboard?.pagination?.total_pages || 0) > 1 ? (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, padding: '14px 16px', borderTop: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                         <span>Page {currentPage} of {dashboard.pagination.total_pages} · {dashboard.pagination.total.toLocaleString()} requests</span>
-                        <button className="btn sm" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
-                        <button className="btn sm" disabled={currentPage >= dashboard.pagination.total_pages} onClick={() => setCurrentPage((p) => p + 1)}>Next ›</button>
+                        <button className="btn sm" disabled={loading || currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}>‹ Prev</button>
+                        <button className="btn sm" disabled={loading || currentPage >= dashboard.pagination.total_pages} onClick={() => setCurrentPage((p) => p + 1)}>Next ›</button>
                       </div>
                     ) : null}
                   </div>
