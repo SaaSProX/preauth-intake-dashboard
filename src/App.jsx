@@ -280,6 +280,45 @@ function itemRequestedCost(it) {
   const u = _evtNum(it?.unit_cost); const q = _evtNum(it?.quantity) || 1;
   return u != null ? u * q : 0;
 }
+function eventItemId(event, it, idx) {
+  return it?.claim_item_id || it?.facility_tariff_item_id || it?.id || `${event?.event_id || 'event'}-${idx}`;
+}
+function normalizeEventItem(event, it, idx) {
+  return {
+    id: eventItemId(event, it, idx),
+    name: it?.item_name || it?.description || it?.name || `Item ${it?.id || idx + 1}`,
+    quantity: it?.quantity ?? 1,
+    requested_cost: itemRequestedCost(it),
+    unit_cost: _evtNum(it?.unit_cost),
+    approved_cost: it?.approved_cost ?? null,
+    unit_approved_cost: it?.unit_approved_cost ?? null,
+    item_status: it?.status || it?.claim_item_status || null,
+    pricing_source: it?.pricing_source || null,
+    category_id: it?.category_id ?? null,
+    claim_item_id: it?.claim_item_id ?? null,
+    tariff_id: it?.facility_tariff_item_id ?? null,
+    flags: it?.flags || null,
+    raw: it,
+  };
+}
+function eventSnapshotItems(event) {
+  const payload = asObj(event?.raw_payload);
+  const extracted = asObj(event?.extracted_fields);
+  const pa = asArr(payload?.pa_items).length
+    ? asArr(payload?.pa_items)
+    : asArr(extracted?.items).length
+      ? asArr(extracted.items)
+      : asArr(extracted?.requested_items);
+  return pa.map((it, idx) => normalizeEventItem(event, it, idx));
+}
+function stableEventItemKey(it) {
+  if (it?.id != null && /^\d+$/.test(String(it.id))) return `id:${it.id}`;
+  return [
+    String(it?.name || '').toLowerCase().replace(/\s+/g, ' ').trim(),
+    _evtNum(it?.quantity) ?? '',
+    (_evtNum(it?.requested_cost) ?? 0).toFixed(2),
+  ].join('|');
+}
 function itemsAddedFromEvent(event) {
   const payload = asObj(event?.raw_payload);
   const added = asArr(payload?.submission?.items_added);
@@ -325,19 +364,81 @@ function itemsAddedFromEvent(event) {
       const key = m?.claim_item_id || (m ? `${m?.facility_tariff_item_id || 'item'}-${candidate[0]?.pi}` : null);
       if (key) used.add(key);
       return {
-        id: m?.claim_item_id || `${event?.event_id || 'event'}-${idx}-${id || 'item'}`,
+        id: m?.claim_item_id || m?.facility_tariff_item_id || `${event?.event_id || 'event'}-${idx}-${id || 'item'}`,
         name: m?.item_name || m?.description || m?.name || `Item ${id || idx + 1}`,
         quantity: it?.quantity ?? m?.quantity ?? 1,
         requested_cost: _evtNum(it?.requested_cost) ?? itemRequestedCost(m || it),
+        unit_cost: _evtNum(m?.unit_cost),
+        approved_cost: m?.approved_cost ?? null,
+        unit_approved_cost: m?.unit_approved_cost ?? null,
+        item_status: m?.status || m?.claim_item_status || null,
+        pricing_source: m?.pricing_source || null,
+        category_id: m?.category_id ?? it?.category_id ?? null,
+        claim_item_id: m?.claim_item_id ?? null,
+        tariff_id: m?.facility_tariff_item_id ?? id ?? null,
+        flags: m?.flags || null,
+        raw: m || it,
       };
     });
   }
-  return pa.map((it, idx) => ({
-    id: it?.claim_item_id || it?.facility_tariff_item_id || `${event?.event_id || 'event'}-${idx}`,
-    name: it?.item_name || it?.description || it?.name || `Item ${idx + 1}`,
-    quantity: it?.quantity ?? 1,
-    requested_cost: itemRequestedCost(it),
-  }));
+  return pa.map((it, idx) => normalizeEventItem(event, it, idx));
+}
+function existingItemsFromFirstEvent(event) {
+  const payload = asObj(event?.raw_payload);
+  const addedRaw = asArr(payload?.submission?.items_added);
+  if (!addedRaw.length) return [];
+  const snapshot = eventSnapshotItems(event);
+  if (!snapshot.length || snapshot.length <= addedRaw.length) return [];
+  const addedKeys = new Set(itemsAddedFromEvent(event).map(stableEventItemKey));
+  return snapshot.filter((it) => !addedKeys.has(stableEventItemKey(it)));
+}
+function eventItemsTotal(items) {
+  return asArr(items).reduce((sum, it) => sum + (_evtNum(it?.requested_cost) ?? 0), 0);
+}
+function itemStatusInfo(it) {
+  const raw = it?.item_status;
+  const s = String(raw ?? '').trim().toLowerCase();
+  const approved = _evtNum(it?.approved_cost);
+  const unitApproved = _evtNum(it?.unit_approved_cost);
+  if (['approved', 'approve'].includes(s) || (!s && ((approved != null && approved > 0) || (unitApproved != null && unitApproved > 0)))) {
+    return { label: 'approved', bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
+  }
+  if (['rejected', 'reject', 'denied', 'deny'].includes(s)) {
+    return { label: 'rejected', bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' };
+  }
+  if (['queried', 'query'].includes(s)) {
+    return { label: 'queried', bg: 'var(--warn-bg)', ink: 'var(--warn-ink)', line: 'var(--warn-line)' };
+  }
+  if (['pending', '0'].includes(s)) {
+    return { label: 'pending', bg: 'var(--slate-bg)', ink: 'var(--slate-ink)', line: 'var(--slate-line)' };
+  }
+  if (s) {
+    return { label: s, bg: 'var(--bg-3)', ink: 'var(--ink-2)', line: 'var(--line-2)' };
+  }
+  return null;
+}
+function ItemStatusBadge({ item }) {
+  const meta = itemStatusInfo(item);
+  if (!meta) return null;
+  return (
+    <span
+      data-tip="Item status from AMAN's PA payload."
+      style={{
+        background: meta.bg,
+        color: meta.ink,
+        border: `1px solid ${meta.line}`,
+        padding: '1px 7px',
+        borderRadius: 999,
+        fontSize: 10.5,
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        fontFamily: 'var(--mono)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {meta.label}
+    </span>
+  );
 }
 function providerLabel(v) {
   if (!v) return '';
@@ -409,6 +510,7 @@ function deriveStages(r) {
       name: l.agent_name || STAGE_NAMES[l.agent_num] || '',
       status: l.status === 'pass' || l.status === 'fail' ? l.status : (l.status || 'pass'),
       time: fmtClock(l.logged_at),
+      logged_at: l.logged_at,
       result: l.result,
     }));
   }
@@ -422,7 +524,7 @@ function deriveStages(r) {
         if (o.pass === false) status = 'fail';
         else if (o.pass === true) status = 'pass';
       }
-      out.push({ n: i, name: STAGE_NAMES[i], status, time: '', result: o });
+      out.push({ n: i, name: STAGE_NAMES[i], status, time: '', logged_at: null, result: o });
     }
   }
   return out;
@@ -482,30 +584,70 @@ function mapRequest(r) {
   };
 }
 
-// Match a line item name against Agent 2's covered/denied lists. The agent
-// often appends a reason after an em/en-dash on denied items, e.g.
-// "HbsAg — Hepatitis treatment excluded".
-function findCoverageVerdict(itemName, coverage) {
-  if (!coverage || !itemName) return null;
-  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const ln = norm(itemName);
-  if (!ln) return null;
-  const stem = ln.split(' ').slice(0, 2).join(' ');
-  for (const d of (coverage.denied || [])) {
-    const nd = norm(d);
-    if (!nd) continue;
-    if (nd.startsWith(stem) || nd.includes(stem) || stem.includes(norm(d.split(/[—–\-]/)[0] || ''))) {
-      const parts = String(d).split(/\s*[—–]\s*|\s+-\s+/);
-      const reason = parts.length > 1 ? parts.slice(1).join(' — ') : (coverage.exclusion_detail || coverage.waiting_period_detail || coverage.plan_restriction_detail || coverage.reason || null);
-      return { verdict: 'denied', reason };
+function timestampMs(value) {
+  if (!value) return null;
+  const d = new Date(parseApiDate(value));
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+function eventTimeMs(event) {
+  return timestampMs(event?.submitted_at || event?.occurred_at || event?.created_at || event?.first_seen_at);
+}
+function splitStageRuns(stages) {
+  const ordered = asArr(stages)
+    .map((stage, idx) => ({ ...stage, _idx: idx, _ts: timestampMs(stage.logged_at) }))
+    .sort((a, b) => {
+      if (a._ts != null && b._ts != null && a._ts !== b._ts) return a._ts - b._ts;
+      return a._idx - b._idx;
+    });
+  const runs = [];
+  let current = [];
+  ordered.forEach((stage) => {
+    const n = Number(stage.n);
+    if (current.length && n === 1) {
+      runs.push(current);
+      current = [];
     }
-  }
-  for (const c of (coverage.covered || [])) {
-    const nc = norm(c);
-    if (!nc) continue;
-    if (nc === ln || nc.includes(stem) || ln.includes(nc)) return { verdict: 'covered', reason: null };
-  }
-  return null;
+    current.push(stage);
+  });
+  if (current.length) runs.push(current);
+  return runs.map((run) => run.map(({ _idx, _ts, ...stage }) => stage));
+}
+function attachStageRunsToEvents(events, stages) {
+  const eventRows = asArr(events);
+  if (!eventRows.length) return [];
+  const runs = splitStageRuns(stages);
+  if (!runs.length) return eventRows.map((event) => ({ event, stages: [] }));
+  if (eventRows.length === 1 && runs.length > 1) return [{ event: eventRows[0], stages: runs[runs.length - 1] }];
+  const used = new Set();
+  const toleranceMs = 3 * 60 * 1000;
+  return eventRows.map((event, idx) => {
+    const start = eventTimeMs(event);
+    const next = eventTimeMs(eventRows[idx + 1]);
+    let runIndex = -1;
+    if (start != null) {
+      runIndex = runs.findIndex((run, ri) => {
+        if (used.has(ri)) return false;
+        const first = timestampMs(run[0]?.logged_at);
+        if (first == null) return false;
+        return first >= start - toleranceMs && (next == null || first < next - 1000);
+      });
+    }
+    if (runIndex < 0 && runs.length === eventRows.length && !used.has(idx)) runIndex = idx;
+    if (runIndex < 0) {
+      runIndex = runs.findIndex((run, ri) => {
+        if (used.has(ri)) return false;
+        const first = timestampMs(run[0]?.logged_at);
+        if (first == null || start == null) return false;
+        return first >= start - toleranceMs;
+      });
+    }
+    if (runIndex >= 0) {
+      used.add(runIndex);
+      return { event, stages: runs[runIndex] };
+    }
+    return { event, stages: [] };
+  });
 }
 function jsonPretty(obj) {
   if (obj == null) return '<span style="color:#6b7385">null</span>';
@@ -876,74 +1018,23 @@ function DetailsGrid({ r }) {
 }
 function LineItems({ r }) {
   if (!r.items || !r.items.length) return null;
-  const cov = r.coverage;
-  const coveragePass = cov ? ((cov.denied || []).length === 0) : null;
   return (
     <div>
       <div className="sec-h">Requested items <span className="n">{r.items.length}</span></div>
-      {cov && cov.reason ? (
-        <div style={{
-          marginTop: 8,
-          padding: '10px 12px',
-          background: coveragePass ? 'var(--ok-bg)' : 'var(--bad-bg)',
-          border: `1px solid ${coveragePass ? 'var(--ok-line)' : 'var(--bad-line)'}`,
-          color: coveragePass ? 'var(--ok-ink)' : 'var(--bad-ink)',
-          borderRadius: 9,
-          fontSize: 12,
-          lineHeight: 1.5,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>
-              Agent 2 · Plan &amp; Coverage
-            </span>
-            <span className="mono" style={{ fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 999, background: 'rgba(0,0,0,0.05)' }}>
-              {coveragePass ? 'PASS' : 'FAIL'}
-            </span>
-            {(cov.covered || []).length ? <span className="mono" style={{ fontSize: 11, opacity: 0.8 }}>{(cov.covered || []).length} covered</span> : null}
-            {(cov.denied || []).length ? <span className="mono" style={{ fontSize: 11, opacity: 0.8 }}>{(cov.denied || []).length} denied</span> : null}
-          </div>
-          <div>{cov.reason}</div>
-        </div>
-      ) : null}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
         {r.items.map((it, i) => {
           const total = it.unit * it.qty;
           const approved = Number(it.approved_cost) || 0;
           const hasApprovedField = it.approved_cost != null;
-          const verdict = findCoverageVerdict(it.name, r.coverage);
-          const verdictColor = verdict?.verdict === 'denied'
-            ? { bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' }
-            : { bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
           return (
             <details key={i} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9 }}>
-              <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: '1fr auto 60px 130px 16px', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+              <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: '1fr 60px 130px 16px', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
                 <div style={{ fontSize: 13 }}>{it.name}</div>
-                <div>
-                  {verdict ? (
-                    <span
-                      data-tip={verdict.verdict === 'denied'
-                        ? (verdict.reason ? `Agent 2 (Plan & Coverage) flagged this item: ${verdict.reason}` : 'Agent 2 (Plan & Coverage) found this item is excluded or hits a coverage rule.')
-                        : 'Agent 2 (Plan & Coverage) confirmed this item is covered by the patient’s plan.'}
-                      style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'var(--mono)' }}
-                    >
-                      {verdict.verdict}
-                    </span>
-                  ) : null}
-                </div>
                 <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>×{it.qty}</div>
                 <div className="mono" style={{ fontSize: 12, textAlign: 'right' }}>{fmtNGNfull(total)}</div>
                 <div style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 10, textAlign: 'right' }}>▾</div>
               </summary>
               <div style={{ padding: '12px 14px 14px', borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: '120px 1fr', rowGap: 6, columnGap: 12, fontSize: 12, fontFamily: 'var(--mono)' }}>
-                {verdict ? (
-                  <>
-                    <div className="muted">AI verdict</div>
-                    <div>
-                      <span style={{ background: verdictColor.bg, color: verdictColor.ink, border: `1px solid ${verdictColor.line}`, padding: '1px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase' }}>{verdict.verdict}</span>
-                      {verdict.reason ? <div style={{ marginTop: 6, color: 'var(--ink-2)', whiteSpace: 'normal' }}>{verdict.reason}</div> : null}
-                    </div>
-                  </>
-                ) : null}
                 <div className="muted">Unit cost</div><div>{fmtNGNfull(it.unit)}</div>
                 <div className="muted">Quantity</div><div>{it.qty}</div>
                 <div className="muted">Requested</div><div>{fmtNGNfull(total)}</div>
@@ -1080,9 +1171,9 @@ function StageHighlights({ stage }) {
   return null;
 }
 
-function AgentTimeline({ r }) {
+function AgentTimeline({ r, emptyMessage }) {
   if (!r.stages || !r.stages.length) {
-    return <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>Pipeline has not started for this request{r.status === 'received' ? ' — awaiting auto-decision.' : '.'}</div>;
+    return <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: '12.5px', padding: '14px 0' }}>{emptyMessage || `Pipeline has not started for this request${r.status === 'received' ? ' — awaiting auto-decision.' : '.'}`}</div>;
   }
   return (
     <div className="timeline">
@@ -1109,8 +1200,69 @@ function AgentTimeline({ r }) {
     </div>
   );
 }
+function EventItemRows({ items }) {
+  if (!items || !items.length) {
+    return <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+      {items.map((it) => {
+        const unit = _evtNum(it.unit_cost);
+        const qty = _evtNum(it.quantity) || 1;
+        const requested = _evtNum(it.requested_cost) ?? (unit != null ? unit * qty : 0);
+        const approved = _evtNum(it.approved_cost);
+        return (
+          <details key={it.id} style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 7 }}>
+            <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto 60px 110px 16px', gap: 8, alignItems: 'center', padding: '6px 9px' }}>
+              <span style={{ fontSize: 12, minWidth: 0 }}>{it.name}</span>
+              <ItemStatusBadge item={it} />
+              <span className="muted mono" style={{ fontSize: 11 }}>×{qty}</span>
+              <span className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{fmtNGNfull(requested)}</span>
+              <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 10, textAlign: 'right' }}>▾</span>
+            </summary>
+            <div style={{ padding: '10px 12px 12px', borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: '112px 1fr', rowGap: 6, columnGap: 12, fontSize: 11.5, fontFamily: 'var(--mono)' }}>
+              <div className="muted">Unit cost</div><div>{unit != null ? fmtNGNfull(unit) : '—'}</div>
+              <div className="muted">Quantity</div><div>{qty}</div>
+              <div className="muted">Requested</div><div>{fmtNGNfull(requested)}</div>
+              <div className="muted">Approved</div><div>{approved != null ? fmtNGNfull(approved) : '—'}</div>
+              {it.item_status != null ? <><div className="muted">Item status</div><div>{itemStatusInfo(it)?.label || String(it.item_status)}</div></> : null}
+              {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
+              {it.category_id != null ? <><div className="muted">Category</div><div>#{it.category_id}</div></> : null}
+              {it.flags && (it.flags.active_count || it.flags.highest_severity) ? (
+                <>
+                  <div className="muted">Flags</div>
+                  <div>
+                    {it.flags.active_count ? <span style={{ marginRight: 10 }}>active: {it.flags.active_count}</span> : null}
+                    {it.flags.highest_severity ? <span>severity: {it.flags.highest_severity}</span> : null}
+                  </div>
+                </>
+              ) : null}
+              {(it.claim_item_id || it.tariff_id) ? (
+                <>
+                  <div className="muted">IDs</div>
+                  <div>
+                    {it.claim_item_id ? <span style={{ marginRight: 10 }}>claim: {it.claim_item_id}</span> : null}
+                    {it.tariff_id ? <span>tariff: {it.tariff_id}</span> : null}
+                  </div>
+                </>
+              ) : null}
+              <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
+                <details>
+                  <summary style={{ cursor: 'pointer', color: 'var(--ink-3)', fontSize: 11 }}>Raw item JSON</summary>
+                  <CodeBlock data={it.raw || it} />
+                </details>
+              </div>
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
 function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient }) {
   if (!r) return null;
+  const eventRuns = attachStageRunsToEvents(paEvents || [], r.stages || []);
+  const firstExistingItems = eventRuns.length ? existingItemsFromFirstEvent(eventRuns[0].event) : [];
   return (
     <div className="detail">
       <div className="dhead">
@@ -1140,7 +1292,6 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
       </div>
       <DecisionBlock r={r} />
       <div><div className="sec-h">Request details</div><DetailsGrid r={r} /></div>
-      <LineItems r={r} />
       {siblings && siblings.length > 0 ? (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -1181,12 +1332,29 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
           {paEventsLoading && !(paEvents || []).length ? (
             <div className="muted mono" style={{ fontSize: 12, padding: '8px 2px' }}>Loading event history…</div>
           ) : null}
-          {(paEvents || []).length ? (
+          {eventRuns.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-              {paEvents.map((event) => {
+              {firstExistingItems.length ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '32px 1fr', gap: 10 }}>
+                  <div style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: 'var(--bg-3)', color: 'var(--ink-2)', fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700 }}>0</div>
+                  <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 9, padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
+                      <b style={{ fontSize: 13 }}>Existing items</b>
+                      <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>{fmtNGNfull(eventItemsTotal(firstExistingItems))}</span>
+                    </div>
+                    <div className="muted mono" style={{ fontSize: 11, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      <span>{firstExistingItems.length} line item{firstExistingItems.length === 1 ? '' : 's'}</span>
+                      <span>· Already on this PA before our first captured event</span>
+                    </div>
+                    <EventItemRows items={firstExistingItems} />
+                  </div>
+                </div>
+              ) : null}
+              {eventRuns.map(({ event, stages }, eventIdx) => {
                 const seq = _evtNum(event.event_sequence) || 0;
                 const items = itemsAddedFromEvent(event);
                 const when = event.submitted_at || event.occurred_at || event.created_at;
+                const isLatestEvent = eventIdx === eventRuns.length - 1;
                 return (
                   <div key={event.event_id || event.id} style={{ display: 'grid', gridTemplateColumns: '32px 1fr', gap: 10 }}>
                     <div style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: seq <= 1 ? 'var(--indigo)' : 'var(--ink)', color: '#fff', fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700 }}>{seq || '?'}</div>
@@ -1200,22 +1368,21 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
                         <span>· Snapshot: {fmtNGNfull(event.total_requested_cost)}</span>
                         {when ? <span>· {timeAgo(when)}</span> : null}
                       </div>
-                      {items && items.length ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
-                          {items.map((it) => (
-                            <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 110px', gap: 8, alignItems: 'center', padding: '6px 9px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 7 }}>
-                              <span style={{ fontSize: 12 }}>{it.name}</span>
-                              <span className="muted mono" style={{ fontSize: 11 }}>×{it.quantity}</span>
-                              <span className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{fmtNGNfull(it.requested_cost)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>
-                      )}
+                      <EventItemRows items={items} />
                       <details style={{ marginTop: 8 }}>
                         <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>Event JSON</summary>
                         <CodeBlock data={event.raw_payload || event.payload_summary || event} style={{ marginTop: 6 }} />
+                      </details>
+                      <details open={isLatestEvent} style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+                        <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                          Agent run {stages.length ? `· ${stages.length} stage${stages.length === 1 ? '' : 's'}` : '· not captured for this event'}
+                        </summary>
+                        <div style={{ marginTop: 8 }}>
+                          <AgentTimeline
+                            r={{ ...r, stages }}
+                            emptyMessage="No agent run was matched to this event yet."
+                          />
+                        </div>
                       </details>
                     </div>
                   </div>
@@ -1229,10 +1396,12 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
           ) : null}
         </div>
       ) : null}
-      <div>
-        <div className="sec-h" data-tip="All 4 agents that ran for this PA: Eligibility → Coverage → Limits → Final Decision. Each stage shows its reason and structured result." data-tip-align="left">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} / 4 stages</span></div>
-        <AgentTimeline r={r} />
-      </div>
+      {!eventRuns.length ? (
+        <div>
+          <div className="sec-h" data-tip="All agents that ran for this PA: Eligibility → Coverage → Limits → Final Decision. Each stage shows its reason and structured result." data-tip-align="left">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} stage{r.stages && r.stages.length === 1 ? '' : 's'}</span></div>
+          <AgentTimeline r={r} />
+        </div>
+      ) : null}
       <div>
         <div className="sec-h">Raw / extracted payload</div>
         <details>
