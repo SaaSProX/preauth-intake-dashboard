@@ -1396,7 +1396,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
           ) : null}
         </div>
       ) : null}
-      {!eventRuns.length ? (
+      {!eventRuns.length && !paEventsLoading ? (
         <div>
           <div className="sec-h" data-tip="All agents that ran for this PA: Eligibility → Coverage → Limits → Final Decision. Each stage shows its reason and structured result." data-tip-align="left">Agent reasoning timeline <span className="n">{r.stages ? r.stages.length : 0} stage{r.stages && r.stages.length === 1 ? '' : 's'}</span></div>
           <AgentTimeline r={r} />
