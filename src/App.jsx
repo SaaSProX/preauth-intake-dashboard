@@ -270,6 +270,37 @@ function asArr(v) { return Array.isArray(v) ? v : []; }
 function _evtNum(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
 function eventValue(event) { return _evtNum(event?.items_added_total) ?? _evtNum(event?.total_requested_cost) ?? 0; }
 function eventItemCount(event) { return _evtNum(event?.items_added_count) ?? _evtNum(event?.item_count) ?? 0; }
+const AMAN_CATEGORY_LABELS = {
+  1: 'Drugs and consumables',
+  2: 'Services and procedures',
+  3: 'Laboratory investigations',
+  4: 'Radiological investigations',
+  5: 'Dental care',
+  6: 'Optical care',
+  7: 'Immunization and vaccine',
+  8: 'Wellness',
+};
+const AMAN_CARE_TYPE_LABELS = {
+  1: 'Inpatient',
+  2: 'Outpatient',
+  3: 'Antenatal',
+  4: 'Dental Care',
+  5: 'Optical care',
+  6: 'Telemedicine',
+  7: 'Wellness',
+};
+function amanMappedLabel(map, value) {
+  const n = _evtNum(value);
+  return n == null ? null : map[n] || null;
+}
+function categoryLabel(value) {
+  if (value == null || value === '') return null;
+  const label = amanMappedLabel(AMAN_CATEGORY_LABELS, value);
+  return label ? `${label} (#${value})` : `#${value}`;
+}
+function careTypeLabel(value) {
+  return amanMappedLabel(AMAN_CARE_TYPE_LABELS, value);
+}
 function closeNumberMatch(a, b) {
   const x = _evtNum(a); const y = _evtNum(b);
   return x !== null && y !== null && Math.abs(x - y) < 0.01;
@@ -292,9 +323,11 @@ function normalizeEventItem(event, it, idx) {
     unit_cost: _evtNum(it?.unit_cost),
     approved_cost: it?.approved_cost ?? null,
     unit_approved_cost: it?.unit_approved_cost ?? null,
-    item_status: it?.status || it?.claim_item_status || null,
+    item_status: it?.status ?? it?.claim_item_status ?? null,
+    item_status_label: it?.item_status_label || null,
     pricing_source: it?.pricing_source || null,
     category_id: it?.category_id ?? null,
+    category_label: it?.category_label || categoryLabel(it?.category_id),
     claim_item_id: it?.claim_item_id ?? null,
     tariff_id: it?.facility_tariff_item_id ?? null,
     flags: it?.flags || null,
@@ -371,9 +404,11 @@ function itemsAddedFromEvent(event) {
         unit_cost: _evtNum(m?.unit_cost),
         approved_cost: m?.approved_cost ?? null,
         unit_approved_cost: m?.unit_approved_cost ?? null,
-        item_status: m?.status || m?.claim_item_status || null,
+        item_status: m?.status ?? m?.claim_item_status ?? null,
+        item_status_label: m?.item_status_label || null,
         pricing_source: m?.pricing_source || null,
         category_id: m?.category_id ?? it?.category_id ?? null,
+        category_label: m?.category_label || categoryLabel(m?.category_id ?? it?.category_id),
         claim_item_id: m?.claim_item_id ?? null,
         tariff_id: m?.facility_tariff_item_id ?? id ?? null,
         flags: m?.flags || null,
@@ -396,17 +431,17 @@ function eventItemsTotal(items) {
   return asArr(items).reduce((sum, it) => sum + (_evtNum(it?.requested_cost) ?? 0), 0);
 }
 function itemStatusInfo(it) {
-  const raw = it?.item_status;
+  const raw = it?.item_status_label || it?.item_status;
   const s = String(raw ?? '').trim().toLowerCase();
   const approved = _evtNum(it?.approved_cost);
   const unitApproved = _evtNum(it?.unit_approved_cost);
-  if (['approved', 'approve'].includes(s) || (!s && ((approved != null && approved > 0) || (unitApproved != null && unitApproved > 0)))) {
+  if (['approved', 'approve', '1'].includes(s) || (!s && ((approved != null && approved > 0) || (unitApproved != null && unitApproved > 0)))) {
     return { label: 'approved', bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
   }
-  if (['rejected', 'reject', 'denied', 'deny'].includes(s)) {
+  if (['rejected', 'reject', 'denied', 'deny', '3'].includes(s)) {
     return { label: 'rejected', bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' };
   }
-  if (['queried', 'query'].includes(s)) {
+  if (['queried', 'query', '2'].includes(s)) {
     return { label: 'queried', bg: 'var(--warn-bg)', ink: 'var(--warn-ink)', line: 'var(--warn-line)' };
   }
   if (['pending', '0'].includes(s)) {
@@ -458,12 +493,14 @@ function itemsFromPayload(raw) {
       name: itm.item_name || itm.description || itm.name || 'Item',
       qty: Number(itm.quantity) || 1,
       unit: Number(itm.unit_cost ?? itm.requested_cost ?? itm.cost ?? 0) || 0,
-      item_status: itm.status || null,
+      item_status: itm.status ?? itm.claim_item_status ?? null,
+      item_status_label: itm.item_status_label || null,
       requested_cost: itm.requested_cost ?? null,
       approved_cost: itm.approved_cost ?? null,
       unit_approved_cost: itm.unit_approved_cost ?? null,
       pricing_source: itm.pricing_source || null,
       category_id: itm.category_id ?? null,
+      category_label: itm.category_label || categoryLabel(itm.category_id),
       claim_item_id: itm.claim_item_id ?? null,
       tariff_id: itm.facility_tariff_item_id ?? null,
       type: itm.type || itm.category || null,
@@ -559,7 +596,7 @@ function mapRequest(r) {
     received_at: r.received_at,
     received_label: timeAgo(r.received_at),
     diagnosis,
-    checkin_type: enc.checkin_type || '—',
+    checkin_type: enc.checkin_type || careTypeLabel(enc.care_type) || '—',
     reason: r.reason || ar.reasoning || ar.denial_reason || ar.escalation_reason || '',
     error_message: r.error_message,
     flags: asArr(ar.flags),
@@ -1041,7 +1078,7 @@ function LineItems({ r }) {
                 <div className="muted">Approved</div><div>{hasApprovedField ? (approved > 0 ? fmtNGNfull(approved) : '₦0 (not approved at item level)') : '—'}</div>
                 {it.item_status ? <><div className="muted">Item status</div><div>{it.item_status}</div></> : null}
                 {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
-                {it.category_id != null ? <><div className="muted">Category</div><div>#{it.category_id}</div></> : null}
+                {it.category_id != null ? <><div className="muted">Category</div><div>{it.category_label || categoryLabel(it.category_id)}</div></> : null}
                 {it.code ? <><div className="muted">Code</div><div>{it.code}</div></> : null}
                 {it.diagnosis ? <><div className="muted">Diagnosis</div><div>{String(it.diagnosis)}</div></> : null}
                 {it.provider ? <><div className="muted">Provider</div><div>{providerLabel(it.provider) || JSON.stringify(it.provider)}</div></> : null}
@@ -1227,7 +1264,7 @@ function EventItemRows({ items }) {
               <div className="muted">Approved</div><div>{approved != null ? fmtNGNfull(approved) : '—'}</div>
               {it.item_status != null ? <><div className="muted">Item status</div><div>{itemStatusInfo(it)?.label || String(it.item_status)}</div></> : null}
               {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
-              {it.category_id != null ? <><div className="muted">Category</div><div>#{it.category_id}</div></> : null}
+              {it.category_id != null ? <><div className="muted">Category</div><div>{it.category_label || categoryLabel(it.category_id)}</div></> : null}
               {it.flags && (it.flags.active_count || it.flags.highest_severity) ? (
                 <>
                   <div className="muted">Flags</div>
