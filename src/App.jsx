@@ -2421,7 +2421,7 @@ function SupportInbox({ data, loading, error, selected, onSelect, onRefresh }) {
   );
 }
 
-function SupportView({ org, data, messagesData, messagesLoading, messagesError, selectedMessage, onSelectMessage, loading, error, notice, isAdmin, isDrillIn, busy, onRefresh, onRefreshMessages, onConnect, onDisconnect, onStartWatch }) {
+function SupportView({ org, data, messagesData, messagesLoading, messagesError, selectedMessage, onSelectMessage, loading, error, notice, isAdmin, busy, onRefresh, onRefreshMessages, onConnect, onDisconnect, onStartWatch }) {
   const [soonMessage, setSoonMessage] = useState('');
   const connections = data?.connections || [];
   const activeConnections = connections.filter((c) => c.status === 'connected');
@@ -2460,7 +2460,7 @@ function SupportView({ org, data, messagesData, messagesLoading, messagesError, 
               </div>
               <div className="integration-actions">
                 <span className={`pill ${listening ? 'approve' : connected ? 'processing' : 'pending'}`}><span className="dot" />{statusText}</span>
-                {isAdmin && !isDrillIn ? (
+                {isAdmin ? (
                   <button className="btn sm primary" onClick={onConnect} disabled={busy || loading || !configured} data-admin-only>
                     <GmailMark size={14} />
                     {connected ? 'Connect another' : 'Connect Gmail'}
@@ -2487,7 +2487,7 @@ function SupportView({ org, data, messagesData, messagesLoading, messagesError, 
                       <span>{c.last_sync_at ? `Synced ${timeAgo(c.last_sync_at)}` : 'Sync not started'}</span>
                       <span>{`${c.support_message_count || 0} emails captured`}</span>
                     </div>
-                    {isAdmin && !isDrillIn && c.status === 'connected' ? (
+                    {isAdmin && c.status === 'connected' ? (
                       <div className="connection-actions">
                         <button className="btn sm" onClick={() => onStartWatch(c.id)} disabled={busy || !configured} data-admin-only>
                           <Radio size={13} />
@@ -2507,7 +2507,7 @@ function SupportView({ org, data, messagesData, messagesLoading, messagesError, 
               <div className="support-empty">
                 <h4>No Gmail mailbox connected</h4>
                 <p>Connect a support or provider mailbox to start the email intake pipeline.</p>
-                {isAdmin && !isDrillIn ? (
+                {isAdmin ? (
                   <button className="btn primary support-connect" onClick={onConnect} disabled={busy || loading || !configured} data-admin-only>
                     <GmailMark size={15} />
                     Connect Gmail
@@ -2533,7 +2533,7 @@ function SupportView({ org, data, messagesData, messagesLoading, messagesError, 
             <div className="support-empty">
               <h4>WhatsApp connection is coming soon</h4>
               <p>We will use this for provider requests, eligibility checks, and member support conversations.</p>
-              {isAdmin && !isDrillIn ? (
+              {isAdmin ? (
                 <button className="btn support-connect" type="button" onClick={() => setSoonMessage('WhatsApp intake is coming soon.') } data-admin-only>
                   <WhatsAppMark size={15} />
                   Connect WhatsApp
@@ -3152,7 +3152,9 @@ function AppInner() {
     setGmailError('');
     setGmailNotice('');
     try {
-      const data = await apiRequest('/auth/integrations/gmail/connect');
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      const data = await apiRequest('/auth/integrations/gmail/connect' + (qs.toString() ? `?${qs.toString()}` : ''));
       if (!data.auth_url) throw new Error('Google connection URL was not returned');
       window.location.href = data.auth_url;
     } catch (err) {
