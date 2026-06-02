@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, createContext, useContext, useCallback, useRef } from 'react';
+import { AlertTriangle, CheckCircle2, Radio, RefreshCw, Unplug } from 'lucide-react';
 import { PatientReportSheet } from './report.jsx';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
@@ -1572,8 +1573,7 @@ const NAV = [
   { id: 'health', label: 'Integration Health', live: true },
   { id: 'audit', label: 'Audit Trail', live: true },
   { id: 'patients', label: 'Patients', live: true },
-  { id: 'eligibility', label: 'Eligibility Checks', live: false },
-  { id: 'support', label: 'Support', live: false },
+  { id: 'support', label: 'AI Customer Ops', live: true },
 ];
 const NAV_ADMIN = [
   { id: 'team', label: 'Team', live: true, lock: true },
@@ -1595,7 +1595,7 @@ function Sidebar({ active, onNav, session, intakeCount, collapsed, onToggleColla
       onClick={(e) => { e.preventDefault(); onNav(n.id); }}
     >
       <span className="gl" /><span className="nav-label">{n.label}</span>
-      {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)}
+      {/* {!n.live ? <span className="soon-tag">SOON</span> : (n.id === 'intake' ? <span className="ct">{intakeCount}</span> : null)} */}
     </a>
   );
   return (
@@ -2304,6 +2304,258 @@ function StubChannel({ title, sub, cols, note }) {
     </>
   );
 }
+
+function GmailMark({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="brand-mark">
+      <path fill="#EA4335" d="M3.6 6.4 12 12.7l8.4-6.3v10.8c0 .7-.6 1.3-1.3 1.3h-2.4V11.1L12 14.6l-4.7-3.5v7.4H4.9c-.7 0-1.3-.6-1.3-1.3V6.4Z" />
+      <path fill="#FBBC04" d="M3.6 6.4v-.1c0-.7.6-1.3 1.3-1.3h.6L12 9.9l6.5-4.9h.6c.7 0 1.3.6 1.3 1.3v.1L12 12.7 3.6 6.4Z" />
+      <path fill="#34A853" d="M3.6 6.4v10.8c0 .7.6 1.3 1.3 1.3h2.4V11.1L3.6 8.3V6.4Z" />
+      <path fill="#4285F4" d="M16.7 18.5h2.4c.7 0 1.3-.6 1.3-1.3V6.4l-3.7 2.8v9.3Z" />
+    </svg>
+  );
+}
+
+function WhatsAppMark({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="brand-mark">
+      <path fill="#25D366" d="M12 3.2a8.6 8.6 0 0 0-7.4 13l-1 3.7 3.8-1A8.6 8.6 0 1 0 12 3.2Z" />
+      <path fill="#fff" d="M16.8 14.2c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.5.1-.2.2-.6.8-.8.9-.1.2-.3.2-.5.1-.3-.1-1.1-.4-2.1-1.3-.8-.7-1.3-1.5-1.5-1.8-.1-.3 0-.4.1-.5l.4-.5c.1-.2.2-.3.2-.5.1-.2 0-.3 0-.5 0-.1-.5-1.3-.7-1.8-.2-.5-.4-.4-.5-.4h-.5c-.2 0-.5.1-.7.3-.2.3-.9.9-.9 2.1s.9 2.4 1 2.6c.1.2 1.8 2.8 4.4 3.9.6.3 1.1.4 1.5.5.6.2 1.2.1 1.6.1.5-.1 1.4-.6 1.6-1.1.2-.6.2-1 .1-1.1-.1-.1-.3-.2-.6-.3Z" />
+    </svg>
+  );
+}
+
+function supportSenderName(value) {
+  const text = String(value || '').trim();
+  if (!text) return 'Unknown sender';
+  const match = text.match(/^"?([^"<]+)"?\s*</);
+  return (match ? match[1] : text).trim();
+}
+
+function SupportSourceMark({ channel, size = 18 }) {
+  if (channel === 'whatsapp') return <WhatsAppMark size={size} />;
+  return <GmailMark size={size} />;
+}
+
+function SupportInbox({ data, loading, error, selected, onSelect, onRefresh }) {
+  const messages = data?.messages || [];
+  const active = selected || messages[0] || null;
+
+  return (
+    <section className="support-inbox section-gap">
+      <div className="support-inbox-head">
+        <div>
+          <h2>Live support inbox</h2>
+          <p>Email and WhatsApp conversations captured for agent handling</p>
+        </div>
+        <button className="btn sm" type="button" onClick={onRefresh} disabled={loading}>Refresh inbox</button>
+      </div>
+
+      {error ? <div className="ro-banner" style={{ display: 'flex', background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+
+      <div className="support-inbox-grid">
+        <div className="support-message-list">
+          {loading ? (
+            <div className="support-loading"><span className="thinking"><i /><i /><i /></span><b>Loading support inbox</b></div>
+          ) : messages.length ? messages.map((m) => (
+            <button className={`support-message-row ${active?.id === m.id ? 'active' : ''}`} type="button" key={m.id} onClick={() => onSelect(m)}>
+              <span className={`support-source ${m.channel || 'gmail'}`}><SupportSourceMark channel={m.channel} size={18} /></span>
+              <span className="support-message-main">
+                <span className="support-message-top">
+                  <b>{supportSenderName(m.from_email)}</b>
+                  <em>{m.received_at ? timeAgo(m.received_at) : 'Just now'}</em>
+                </span>
+                <span className="support-message-subject">{m.subject || '(No subject)'}</span>
+                <span className="support-message-snippet">{m.snippet || m.body_text || 'No preview available'}</span>
+              </span>
+            </button>
+          )) : (
+            <div className="support-empty inbox-empty">
+              <h4>No support messages yet</h4>
+              <p>New Gmail and WhatsApp conversations will appear here after the agent intake receives them.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="support-message-detail">
+          {active ? (
+            <>
+              <div className="support-detail-head">
+                <span className={`support-source ${active.channel || 'gmail'}`}><SupportSourceMark channel={active.channel} size={20} /></span>
+                <div>
+                  <h3>{active.subject || '(No subject)'}</h3>
+                  <p>{supportSenderName(active.from_email)} → {active.to_email || active.mailbox_email || 'Inbox'}</p>
+                </div>
+              </div>
+              <div className="support-detail-meta">
+                <span>{active.channel === 'whatsapp' ? 'WhatsApp' : 'Gmail'}</span>
+                <span>{active.status || 'new'}</span>
+                <span>{active.received_at ? new Date(active.received_at).toLocaleString() : 'No timestamp'}</span>
+              </div>
+              <div className="support-body">
+                {active.body_text || active.snippet || 'No readable body captured yet.'}
+              </div>
+              <div className="support-agent-panel">
+                <div className="sec-h"><span>Agent activity</span><b>{active.agent_activity?.length || 0} steps</b></div>
+                {(active.agent_activity || []).map((step, idx) => (
+                  <div className={`support-agent-step ${step.status || 'pending'}`} key={`${step.step}-${idx}`}>
+                    <span className="support-agent-dot" />
+                    <div>
+                      <b>{step.step}</b>
+                      <h4>{step.title}</h4>
+                      <p>{step.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="support-empty inbox-empty">
+              <h4>Select a message</h4>
+              <p>Open a support message to see the captured content and agent activity.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SupportView({ org, data, messagesData, messagesLoading, messagesError, selectedMessage, onSelectMessage, loading, error, notice, isAdmin, isDrillIn, busy, onRefresh, onRefreshMessages, onConnect, onDisconnect, onStartWatch }) {
+  const [soonMessage, setSoonMessage] = useState('');
+  const connections = data?.connections || [];
+  const activeConnections = connections.filter((c) => c.status === 'connected');
+  const connected = activeConnections.length > 0;
+  const configured = data?.configured !== false;
+  const listening = activeConnections.some((c) => c.watch_status === 'active');
+  const statusText = listening ? 'Realtime active' : connected ? 'Connected' : 'Not connected';
+
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">AI Customer Ops</h1>
+          <p className="page-sub">Deploy AI agents that handle email and WhatsApp provider requests and enrollee questions for <b>{org}</b></p>
+        </div>
+        <div className="page-actions">
+          <button className="icon-btn" title="Refresh" aria-label="Refresh Gmail integration" onClick={onRefresh} disabled={loading}><RefreshCw size={16} /></button>
+        </div>
+      </div>
+
+      {notice ? <div className="ro-banner section-gap" style={{ display: 'flex', background: 'var(--ok-bg)', borderColor: 'var(--ok-line)', color: 'var(--ok-ink)' }}><span className="led" style={{ background: 'var(--ok)' }} /> {notice}</div> : null}
+      {soonMessage ? <div className="ro-banner section-gap" style={{ display: 'flex', background: 'var(--recv-bg)', borderColor: 'var(--recv-line)', color: 'var(--recv-ink)' }}><span className="led" style={{ background: 'var(--recv)' }} /> {soonMessage}</div> : null}
+      {error ? <div className="ro-banner section-gap" style={{ display: 'flex', background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-ink)' }}><span className="led" style={{ background: 'var(--bad)' }} /> {error}</div> : null}
+      {!configured ? <div className="ro-banner section-gap" style={{ display: 'flex', background: 'var(--warn-bg)', borderColor: 'var(--warn-line)', color: 'var(--warn-ink)' }}><span className="led" style={{ background: 'var(--warn)' }} /> Google OAuth credentials are not configured on the backend yet.</div> : null}
+
+      <div className="support-grid section-gap">
+        <section className="integration-panel">
+          <div className={`integration-icon gmail ${connected ? 'on' : ''}`}>
+            <GmailMark size={26} />
+          </div>
+          <div className="integration-main">
+            <div className="integration-top">
+              <div>
+                <h2>Gmail intake</h2>
+                <p>Provider and member email queue</p>
+              </div>
+              <div className="integration-actions">
+                <span className={`pill ${listening ? 'approve' : connected ? 'processing' : 'pending'}`}><span className="dot" />{statusText}</span>
+                {isAdmin && !isDrillIn ? (
+                  <button className="btn sm primary" onClick={onConnect} disabled={busy || loading || !configured} data-admin-only>
+                    <GmailMark size={14} />
+                    {connected ? 'Connect another' : 'Connect Gmail'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="support-loading"><span className="thinking"><i /><i /><i /></span><b>Checking Gmail connection</b></div>
+            ) : connections.length ? (
+              <div className="connection-list">
+                {connections.map((c) => (
+                  <div className="connection-row" key={c.id}>
+                    <div className="connection-name">
+                      {c.status === 'connected' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                      <span>{c.email}</span>
+                    </div>
+                    <div className="connection-meta">
+                      <span>{c.status}</span>
+                      <span>{c.watch_status === 'active' ? 'Listener active' : c.watch_status === 'error' ? 'Listener error' : 'Listener not started'}</span>
+                      <span>{c.updated_at ? `Updated ${timeAgo(c.updated_at)}` : 'No update yet'}</span>
+                      {c.watch_expiration ? <span>{`Renews by ${new Date(c.watch_expiration).toLocaleString()}`}</span> : null}
+                      <span>{c.last_sync_at ? `Synced ${timeAgo(c.last_sync_at)}` : 'Sync not started'}</span>
+                      <span>{`${c.support_message_count || 0} emails captured`}</span>
+                    </div>
+                    {isAdmin && !isDrillIn && c.status === 'connected' ? (
+                      <div className="connection-actions">
+                        <button className="btn sm" onClick={() => onStartWatch(c.id)} disabled={busy || !configured} data-admin-only>
+                          <Radio size={13} />
+                          {c.watch_status === 'active' ? 'Renew listener' : 'Start listener'}
+                        </button>
+                        <button className="btn sm" onClick={() => onDisconnect(c.id)} disabled={busy} data-admin-only>
+                          <Unplug size={13} />
+                          Disconnect
+                        </button>
+                      </div>
+                    ) : null}
+                    {c.watch_error ? <div className="connection-error"><AlertTriangle size={13} />{c.watch_error}</div> : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="support-empty">
+                <h4>No Gmail mailbox connected</h4>
+                <p>Connect a support or provider mailbox to start the email intake pipeline.</p>
+                {isAdmin && !isDrillIn ? (
+                  <button className="btn primary support-connect" onClick={onConnect} disabled={busy || loading || !configured} data-admin-only>
+                    <GmailMark size={15} />
+                    Connect Gmail
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="integration-panel">
+          <div className="integration-icon whatsapp">
+            <WhatsAppMark size={26} />
+          </div>
+          <div className="integration-main">
+            <div className="integration-top">
+              <div>
+                <h2>WhatsApp intake</h2>
+                <p>Provider and member chat queue</p>
+              </div>
+              <span className="pill pending"><span className="dot" />Soon</span>
+            </div>
+            <div className="support-empty">
+              <h4>WhatsApp connection is coming soon</h4>
+              <p>We will use this for provider requests, eligibility checks, and member support conversations.</p>
+              {isAdmin && !isDrillIn ? (
+                <button className="btn support-connect" type="button" onClick={() => setSoonMessage('WhatsApp intake is coming soon.') } data-admin-only>
+                  <WhatsAppMark size={15} />
+                  Connect WhatsApp
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <SupportInbox
+        data={messagesData}
+        loading={messagesLoading}
+        error={messagesError}
+        selected={selectedMessage}
+        onSelect={onSelectMessage}
+        onRefresh={onRefreshMessages}
+      />
+    </>
+  );
+}
+
 function StubView({ id, session }) {
   const org = session.org_name || 'your organization';
   if (id === 'health') {
@@ -2343,12 +2595,6 @@ function StubView({ id, session }) {
         <div className="stub-table section-gap"><div className="stub-empty"><div className="ph">🔑</div><h4>API key management</h4><p>Backed by /auth/api-key (generate / show-once / revoke). Used to onboard the client's webhook integration.</p></div></div>
       </>
     );
-  }
-  if (id === 'eligibility') {
-    return <StubChannel title="Eligibility Checks" sub="Provider eligibility requests arriving via Email & WhatsApp" cols={['Source', 'Provider', 'Enrollee ID', 'Plan', 'Status', 'Received']} note="Eligibility intake is being wired up. Channel connectors (Email, WhatsApp) will land here as a live operational queue." />;
-  }
-  if (id === 'support') {
-    return <StubChannel title="Support" sub="Support conversations across Email, WhatsApp & Calls" cols={['Channel', 'Requester', 'Intent', 'Assigned to', 'Status', 'Last activity']} note="Support intake is being wired up. Conversations across channels will be triaged and assigned here." />;
   }
   return null;
 }
@@ -2574,6 +2820,15 @@ function AppInner() {
   const [apikeyBusy, setApikeyBusy] = useState(false);
   const [revealedKey, setRevealedKey] = useState('');
   const [keyName, setKeyName] = useState('');
+  const [gmailIntegration, setGmailIntegration] = useState(null);
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailError, setGmailError] = useState('');
+  const [gmailNotice, setGmailNotice] = useState('');
+  const [gmailBusy, setGmailBusy] = useState(false);
+  const [supportMessages, setSupportMessages] = useState(null);
+  const [supportMessagesLoading, setSupportMessagesLoading] = useState(false);
+  const [supportMessagesError, setSupportMessagesError] = useState('');
+  const [selectedSupportMessage, setSelectedSupportMessage] = useState(null);
   const [orgs, setOrgs] = useState(null);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgsError, setOrgsError] = useState('');
@@ -2822,6 +3077,127 @@ function AppInner() {
       await loadApiKey();
     } catch (err) { setApikeyError(err.message || 'Revoke failed'); }
     finally { setApikeyBusy(false); }
+  }
+  function sameGmailIntegration(a, b) {
+    const compact = (value) => (value?.connections || []).map((c) => ({
+      id: c.id,
+      email: c.email,
+      status: c.status,
+      watch_status: c.watch_status,
+      watch_expiration: c.watch_expiration,
+      last_sync_at: c.last_sync_at,
+      support_message_count: c.support_message_count,
+    }));
+    return JSON.stringify(compact(a)) === JSON.stringify(compact(b));
+  }
+  function sameSupportMessages(a, b) {
+    const compact = (value) => ({
+      total: value?.pagination?.total || 0,
+      messages: (value?.messages || []).map((m) => ({
+        id: m.id,
+        status: m.status,
+        subject: m.subject,
+        snippet: m.snippet,
+        received_at: m.received_at,
+        updated_at: m.updated_at,
+      })),
+    });
+    return JSON.stringify(compact(a)) === JSON.stringify(compact(b));
+  }
+  async function loadGmailIntegration({ silent = false } = {}) {
+    if (!session?.token) return;
+    if (!silent) setGmailLoading(true);
+    if (!silent) setGmailError('');
+    try {
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      const data = await apiRequest(`/auth/integrations/gmail${suffix}`);
+      setGmailIntegration((current) => (silent && sameGmailIntegration(current, data) ? current : data));
+    } catch (err) {
+      if (!silent) setGmailError(err.message || 'Could not load Gmail connection');
+    } finally {
+      if (!silent) setGmailLoading(false);
+    }
+  }
+  async function loadSupportMessages({ silent = false } = {}) {
+    if (!session?.token) return;
+    if (!silent) setSupportMessagesLoading(true);
+    if (!silent) setSupportMessagesError('');
+    try {
+      const qs = new URLSearchParams();
+      if (viewOrgId) qs.set('org_id', String(viewOrgId.id));
+      qs.set('page', '1');
+      qs.set('page_size', '25');
+      const data = await apiRequest('/auth/support/messages?' + qs.toString());
+      setSupportMessages((current) => (silent && sameSupportMessages(current, data) ? current : data));
+      setSelectedSupportMessage((current) => {
+        if (!current) return null;
+        const next = (data.messages || []).find((m) => m.id === current.id) || null;
+        if (!next) return null;
+        return silent && JSON.stringify(next) === JSON.stringify(current) ? current : next;
+      });
+    } catch (err) {
+      if (!silent) setSupportMessagesError(err.message || 'Could not load support messages');
+    } finally {
+      if (!silent) setSupportMessagesLoading(false);
+    }
+  }
+  async function refreshSupport({ silent = false } = {}) {
+    await Promise.all([loadGmailIntegration({ silent }), loadSupportMessages({ silent })]);
+  }
+  async function connectGmail() {
+    if (!session?.token) return;
+    setGmailBusy(true);
+    setGmailError('');
+    setGmailNotice('');
+    try {
+      const data = await apiRequest('/auth/integrations/gmail/connect');
+      if (!data.auth_url) throw new Error('Google connection URL was not returned');
+      window.location.href = data.auth_url;
+    } catch (err) {
+      setGmailError(err.message || 'Could not start Gmail connection');
+      setGmailBusy(false);
+    }
+  }
+  async function disconnectGmail(connectionId) {
+    if (!session?.token || !connectionId) return;
+    if (!window.confirm('Disconnect this Gmail mailbox? Email history will stay, but new sync will stop.')) return;
+    setGmailBusy(true);
+    setGmailError('');
+    setGmailNotice('');
+    try {
+      const res = await apiRequest('/auth/integrations/gmail/disconnect', {
+        method: 'POST',
+        body: { connection_id: connectionId },
+      });
+      setGmailNotice(res.message || 'Gmail disconnected');
+      await loadGmailIntegration();
+    } catch (err) {
+      setGmailError(err.message || 'Could not disconnect Gmail');
+    } finally {
+      setGmailBusy(false);
+    }
+  }
+  async function startGmailWatch(connectionId) {
+    if (!session?.token || !connectionId) return;
+    setGmailBusy(true);
+    setGmailError('');
+    setGmailNotice('');
+    try {
+      const body = { connection_id: connectionId };
+      if (viewOrgId) body.org_id = viewOrgId.id;
+      const res = await apiRequest('/auth/integrations/gmail/watch/start', {
+        method: 'POST',
+        body,
+      });
+      setGmailNotice(res.message || 'Gmail realtime listener started');
+      await refreshSupport();
+    } catch (err) {
+      setGmailError(err.message || 'Could not start Gmail listener');
+    } finally {
+      setGmailBusy(false);
+    }
   }
 
   async function loadOrgs() {
@@ -3103,8 +3479,38 @@ function AppInner() {
     if (activeNav === 'apikey' && !apikey) loadApiKey();
     if (activeNav === 'onboarding' && !orgs) loadOrgs();
     if (activeNav === 'patients' && !patients) loadPatients();
+    if (activeNav === 'support') refreshSupport();
     // eslint-disable-next-line
   }, [session?.token, activeNav, viewOrgId]);
+
+  useEffect(() => {
+    if (!session?.token || activeNav !== 'support') return undefined;
+    const id = window.setInterval(() => {
+      refreshSupport({ silent: true });
+    }, 10000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line
+  }, [session?.token, activeNav, viewOrgId]);
+
+  useEffect(() => {
+    if (!session?.token) return;
+    const params = new URLSearchParams(window.location.search);
+    const gmailStatus = params.get('gmail');
+    if (!gmailStatus) return;
+    const detail = params.get('detail');
+    setActiveNav('support');
+    if (gmailStatus === 'connected') {
+      setGmailNotice(detail ? `Gmail connected: ${detail}` : 'Gmail connected');
+    } else if (gmailStatus === 'error') {
+      setGmailError(detail || 'Gmail connection failed');
+    }
+    params.delete('gmail');
+    params.delete('detail');
+    params.set('nav', 'support');
+    const qs = params.toString();
+    window.history.replaceState({}, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+    // eslint-disable-next-line
+  }, [session?.token]);
 
   useEffect(() => {
     if (!session?.token || activeNav !== 'health') return;
@@ -3239,6 +3645,7 @@ function AppInner() {
   // role tier — this is just "admin + org is SAASPRO". An admin of any other
   // org (e.g. AMAN) is just an admin of that org.
   const isPlatformAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
+  const isDrillIn = !!(viewOrgId && viewOrgId.name !== session.org_name);
   const canRetryRequests = session.role === 'admin';
   const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
 
@@ -3299,7 +3706,7 @@ function AppInner() {
       />
 
       <main className="main">
-        {viewOrgId && viewOrgId.name !== session.org_name ? (
+        {isDrillIn ? (
           <div className="ro-banner" style={{ display: 'flex', alignItems: 'center', marginBottom: 14, background: 'var(--tint)', borderColor: 'var(--indigo-soft)', color: 'var(--indigo)' }}>
             <span className="led" style={{ background: 'var(--indigo)' }} />
             <span>
@@ -3529,7 +3936,8 @@ function AppInner() {
                   : activeNav === 'team' ? <TeamView data={team} loading={teamLoading} error={teamError} notice={teamNotice} isAdmin={role === 'admin'} org={session.org_name} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviting={inviting} onInvite={inviteMember} onRemove={removeMember} />
                     : activeNav === 'apikey' ? <ApiKeyView data={apikey} error={apikeyError} notice={apikeyNotice} isAdmin={role === 'admin'} org={session.org_name} revealed={revealedKey} busy={apikeyBusy} onGenerate={generateKey} onRevoke={revokeKey} keyName={keyName} setKeyName={setKeyName} />
                       : activeNav === 'onboarding' ? <OnboardingView data={orgs} loading={orgsLoading} error={orgsError} isPlatformAdmin={isPlatformAdmin} orgName={newOrgName} setOrgName={setNewOrgName} adminEmail={newOrgAdminEmail} setAdminEmail={setNewOrgAdminEmail} onCreate={createOrg} creating={creatingOrg} created={createdOrg} createError={createOrgError} onResetCreate={resetCreateOrg} onSelectOrg={enterDrillIn} onRenameOrg={renameOrg} onToggleActive={setOrgActive} />
-                        : <StubView id={activeNav} session={session} />}
+                        : activeNav === 'support' ? <SupportView data={gmailIntegration} messagesData={supportMessages} messagesLoading={supportMessagesLoading} messagesError={supportMessagesError} selectedMessage={selectedSupportMessage} onSelectMessage={setSelectedSupportMessage} loading={gmailLoading} error={gmailError} notice={gmailNotice} isAdmin={role === 'admin'} isDrillIn={isDrillIn} org={viewOrgId?.name || session.org_name} busy={gmailBusy} onRefresh={refreshSupport} onRefreshMessages={loadSupportMessages} onConnect={connectGmail} onDisconnect={disconnectGmail} onStartWatch={startGmailWatch} />
+                          : <StubView id={activeNav} session={session} />}
           </section>
         )}
       </main>
