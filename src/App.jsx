@@ -2460,10 +2460,10 @@ function SupportView({ org, data, messagesData, messagesLoading, messagesError, 
               </div>
               <div className="integration-actions">
                 <span className={`pill ${listening ? 'approve' : connected ? 'processing' : 'pending'}`}><span className="dot" />{statusText}</span>
-                {isAdmin ? (
+                {isAdmin && connected ? (
                   <button className="btn sm primary" onClick={onConnect} disabled={busy || loading || !configured} data-admin-only>
                     <GmailMark size={14} />
-                    {connected ? 'Connect another' : 'Connect Gmail'}
+                    Connect another
                   </button>
                 ) : null}
               </div>
