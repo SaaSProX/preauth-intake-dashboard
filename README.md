@@ -1,6 +1,6 @@
-# SaaSPro Pre-Auth Operations Console
+# Saaspro Pre-Auth Operations Console
 
-The operations dashboard for SaaSPro's AI pre-authorization service. Operators (HMO admins + their teams, SaaSPro's own admins) sign in here to triage incoming pre-auth requests, audit agent decisions, manage their team + API keys, and — for admins of the SaaSPro org — onboard new HMO clients.
+The operations dashboard for Saaspro's AI pre-authorization service. Operators (HMO admins + their teams, SaaSPro's own admins) sign in here to triage incoming pre-auth requests, audit agent decisions, manage their team + API keys, and — for admins of the SaaSPro org — onboard new HMO clients.
 
 Connects to the backend at [`SaaSProX/preauth`](https://github.com/SaaSProX/preauth).
 
