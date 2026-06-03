@@ -476,6 +476,187 @@ function ItemStatusBadge({ item }) {
     </span>
   );
 }
+function agentDecisionInfo(decision) {
+  const d = String(decision || '').trim().toUpperCase();
+  if (['APPROVE', 'APPROVED', 'PASS'].includes(d)) {
+    return { label: 'approve', bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
+  }
+  if (['DENY', 'DENIED', 'REJECT', 'REJECTED', 'FAIL'].includes(d)) {
+    return { label: 'reject', bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' };
+  }
+  if (d) {
+    return { label: 'escalate', bg: 'var(--warn-bg)', ink: 'var(--warn-ink)', line: 'var(--warn-line)' };
+  }
+  return null;
+}
+function AgentDecisionBadge({ decision }) {
+  const meta = agentDecisionInfo(decision);
+  if (!meta) return null;
+  return (
+    <span
+      data-tip="Recommendation from SaaSPro's item-level agent."
+      style={{
+        background: meta.bg,
+        color: meta.ink,
+        border: `1px solid ${meta.line}`,
+        padding: '1px 7px',
+        borderRadius: 999,
+        fontSize: 10.5,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        fontFamily: 'var(--mono)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {meta.label}
+    </span>
+  );
+}
+function itemIdentityValues(item) {
+  return [
+    item?.claim_item_id,
+    item?.tariff_id,
+    item?.facility_tariff_item_id,
+    item?.id,
+    item?.name,
+    item?.item_name,
+  ]
+    .filter((v) => v !== null && v !== undefined && String(v).trim() !== '')
+    .map((v) => String(v).trim().toLowerCase());
+}
+function agentItemDecisionsFromStages(stages, fallback = []) {
+  const decisions = [];
+  asArr(stages).forEach((stage) => {
+    const result = asObj(stage.result);
+    decisions.push(...asArr(result.item_decisions));
+    decisions.push(...asArr(asObj(result.agent3).item_decisions));
+  });
+  decisions.push(...asArr(fallback));
+  const seen = new Set();
+  return decisions.filter((decision) => {
+    if (!decision || typeof decision !== 'object') return false;
+    const key = [
+      decision.claim_item_id,
+      decision.facility_tariff_item_id,
+      decision.id,
+      decision.item_name,
+      decision.decision,
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function agentDecisionForItem(item, decisions) {
+  const itemKeys = new Set(itemIdentityValues(item));
+  const requested = _evtNum(item?.requested_cost);
+  const byId = asArr(decisions).find((decision) => {
+    const dKeys = itemIdentityValues({
+      claim_item_id: decision.claim_item_id,
+      tariff_id: decision.facility_tariff_item_id,
+      id: decision.id,
+      name: decision.item_name,
+      item_name: decision.item_name,
+    });
+    return dKeys.some((key) => itemKeys.has(key));
+  });
+  if (byId) return byId;
+  return asArr(decisions).find((decision) => {
+    const nameMatch = String(decision.item_name || '').trim().toLowerCase() === String(item?.name || '').trim().toLowerCase();
+    const costMatch = requested == null || closeNumberMatch(decision.requested_cost, requested);
+    return nameMatch && costMatch;
+  }) || null;
+}
+function itemAgentStageStatus(decision) {
+  const d = String(decision || '').trim().toUpperCase();
+  if (['APPROVE', 'APPROVED', 'PASS'].includes(d)) return 'pass';
+  if (['DENY', 'DENIED', 'REJECT', 'REJECTED', 'FAIL'].includes(d)) return 'fail';
+  return 'skip';
+}
+function itemAgentStages(stages, itemDecision) {
+  if (!itemDecision) return [];
+  const coverageStatus = itemAgentStageStatus(itemDecision.coverage_decision || itemDecision.decision);
+  const utilizationStatus = itemDecision.coverage_decision === 'DENY'
+    ? 'skip'
+    : itemDecision.bucket_exceeded || itemDecision.decision === 'DENY'
+      ? 'fail'
+      : itemDecision.decision === 'APPROVE'
+        ? 'pass'
+        : 'skip';
+  const finalStatus = itemAgentStageStatus(itemDecision.decision);
+  return [
+    {
+      n: 2,
+      name: 'Plan & Coverage',
+      status: coverageStatus,
+      question: STAGE_Q['Plan & Coverage'],
+      reason: itemDecision.coverage_reason || 'Coverage was evaluated for this item.',
+      result: {
+        pass: coverageStatus === 'pass' ? true : coverageStatus === 'fail' ? false : null,
+        decision: itemDecision.coverage_decision,
+        reason: itemDecision.coverage_reason,
+        benefit_category: itemDecision.benefit_category,
+        category_id: itemDecision.category_id,
+        category_label: itemDecision.category_label,
+        item_name: itemDecision.item_name,
+        claim_item_id: itemDecision.claim_item_id,
+      },
+      meta: [
+        itemDecision.benefit_category ? `Category: ${itemDecision.benefit_category}` : null,
+        itemDecision.category_label ? `Item type: ${itemDecision.category_label}` : null,
+      ].filter(Boolean),
+    },
+    {
+      n: 3,
+      name: 'Utilization & Limits',
+      status: utilizationStatus,
+      question: STAGE_Q['Utilization & Limits'],
+      reason: itemDecision.reason || 'Utilization was evaluated for this item.',
+      result: {
+        pass: utilizationStatus === 'pass' ? true : utilizationStatus === 'fail' ? false : null,
+        reason: itemDecision.reason || null,
+        bucket: itemDecision.bucket,
+        bucket_key: itemDecision.bucket_key,
+        bucket_source: itemDecision.bucket_source,
+        bucket_limit: itemDecision.bucket_limit,
+        bucket_used_before: itemDecision.bucket_used_before,
+        bucket_remaining_before: itemDecision.bucket_remaining_before,
+        bucket_remaining_after: itemDecision.bucket_remaining_after,
+        bucket_exceeded: itemDecision.bucket_exceeded,
+        limit_definition_id: itemDecision.limit_definition_id,
+        requested_cost: itemDecision.requested_cost,
+        recommended_approved_cost: itemDecision.recommended_approved_cost,
+      },
+      meta: [
+        itemDecision.bucket ? `Bucket: ${itemDecision.bucket}` : null,
+        itemDecision.limit_definition_id != null ? `Limit #${itemDecision.limit_definition_id}` : null,
+        itemDecision.bucket_remaining_before != null ? `Before: ${fmtNGNfull(itemDecision.bucket_remaining_before)}` : null,
+        itemDecision.bucket_remaining_after != null ? `After: ${fmtNGNfull(itemDecision.bucket_remaining_after)}` : null,
+      ].filter(Boolean),
+    },
+    {
+      n: 4,
+      name: 'Final Decision',
+      status: finalStatus,
+      question: STAGE_Q['Final Decision'],
+      reason: itemDecision.reason || 'Final item decision was produced.',
+      result: {
+        decision: itemDecision.decision,
+        recommendation: itemDecision.recommendation,
+        confidence: itemDecision.confidence,
+        reason: itemDecision.reason,
+        claim_item_id: itemDecision.claim_item_id,
+        item_name: itemDecision.item_name,
+        requested_cost: itemDecision.requested_cost,
+        recommended_approved_cost: itemDecision.recommended_approved_cost,
+      },
+      meta: [
+        `Requested: ${fmtNGNfull(itemDecision.requested_cost)}`,
+        `Approved: ${fmtNGNfull(itemDecision.recommended_approved_cost)}`,
+      ],
+    },
+  ];
+}
 function providerLabel(v) {
   if (!v) return '';
   if (typeof v === 'object') return v.name || v.role || v.email || '';
@@ -602,6 +783,7 @@ function mapRequest(r) {
     error_message: r.error_message,
     flags: asArr(ar.flags),
     items,
+    item_decisions: asArr(ar.item_decisions),
     note: isLive ? 'Live HMO payload received. Automated decisioning is paused pending mapping validation for this corporation.' : '',
     stages: deriveStages(r),
     raw_payload: r.raw_payload,
@@ -849,7 +1031,7 @@ function ValuePairMetricCard({ received, approved, lineItems, eventCount }) {
   const approvedPct = safeReceived > 0 ? Math.min(100, Math.round((safeApproved / safeReceived) * 100)) : 0;
   return (
     <div className="metric">
-      <h3 data-tip="Received is total inbound PA value from intake events. Approved is the amount authorized by approved agent decisions." data-tip-align="left" data-tip-pos="below">PA value</h3>
+      <h3 data-tip="Received is total inbound PA value from intake events. Approved is the amount authorized by item-level agent decisions, including partial approvals." data-tip-align="left" data-tip-pos="below">PA value</h3>
       <p className="desc">Received versus approved value across the period</p>
       <div className="value-pair">
         <div className="value-half">
@@ -868,7 +1050,7 @@ function ValuePairMetricCard({ received, approved, lineItems, eventCount }) {
       </div>
       <div className="insight-sep"><span className="sparkle">✦</span> Insight is autogenerated</div>
       <div className="move-h">{fmtNGN(safeReceived)} received · {fmtNGN(safeApproved)} approved</div>
-      <p className="move-p">{(eventCount || 0).toLocaleString()} intake events captured. Received value uses event additions, so follow-up items on the same PA are counted cleanly.</p>
+      <p className="move-p">{(eventCount || 0).toLocaleString()} intake events captured. Received value uses event additions; approved value uses the agent-approved amount.</p>
     </div>
   );
 }
@@ -1018,7 +1200,7 @@ function DecisionBlock({ r }) {
     body = (
       <>
         <p className="reason">{r.reason}</p>
-        {r.status === 'approve' && (
+        {r.amount_approved != null && (
           <div className="amt-line">
             <div><span className="lab">Requested</span>{fmtNGNfull(r.requested_amount)}</div>
             <div><span className="lab">Approved</span><b>{fmtNGNfull(r.amount_approved)}</b></div>
@@ -1238,10 +1420,69 @@ function AgentTimeline({ r, emptyMessage }) {
     </div>
   );
 }
-function EventItemRows({ items }) {
+function ItemAgentSteps({ stages, itemDecision }) {
+  const itemStages = itemAgentStages(stages, itemDecision);
+  if (!itemStages.length) return null;
+  const bar = (used, limit) => {
+    const u = Number(used) || 0;
+    const l = Number(limit) || 0;
+    const pct = l > 0 ? Math.min(100, (u / l) * 100) : 0;
+    const over = u > l;
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px', alignItems: 'center', gap: 8, fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+        <span className="muted">{fmtNGN(u)}</span>
+        <span style={{ height: 6, background: 'var(--bg-3)', borderRadius: 99, overflow: 'hidden' }}>
+          <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: over ? 'var(--bad)' : 'var(--ok)', borderRadius: 99 }} />
+        </span>
+        <span className="muted" style={{ textAlign: 'right' }}>of {fmtNGN(l)}</span>
+      </div>
+    );
+  };
+  return (
+    <details style={{ gridColumn: '1 / -1', marginTop: 6 }}>
+      <summary style={{ cursor: 'pointer', color: 'var(--ink-3)', fontSize: 11 }}>Agent steps</summary>
+      <div className="timeline" style={{ marginTop: 8 }}>
+        {itemStages.map((s) => {
+          const cls = s.status === 'processing' ? 'skip' : s.status;
+          const node = s.status === 'pass' ? '✓' : s.status === 'fail' ? '✕' : s.n;
+          const result = asObj(s.result);
+          const remainingBefore = _evtNum(result.bucket_remaining_before);
+          const limit = _evtNum(result.bucket_limit);
+          const usedBefore = _evtNum(result.bucket_used_before) ?? (limit != null && remainingBefore != null ? limit - remainingBefore : null);
+          return (
+            <div className={`stage ${cls}`} key={s.n}>
+              <div className="node">{node}</div>
+              <div className="s-top">
+                <span className="s-name" data-tip={STAGE_TIPS[s.name]} data-tip-align="left">{s.n}. {s.name}</span>
+                <span className="s-stat">{s.status === 'skip' ? 'review' : s.status}</span>
+              </div>
+              <p className="s-sum">{s.question}</p>
+              {s.reason ? <p style={{ fontSize: 12.5, color: 'var(--ink)', margin: '6px 0 0', lineHeight: 1.55 }}>{s.reason}</p> : null}
+              {s.meta?.length ? (
+                <div className="muted mono" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6, fontSize: 11.5 }}>
+                  {s.meta.map((m) => <span key={m}>{m}</span>)}
+                </div>
+              ) : null}
+              {s.n === 3 && limit != null && usedBefore != null ? (
+                <div style={{ marginTop: 8 }}>
+                  <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 4 }}>{result.bucket || 'Benefit bucket'}{result.bucket_exceeded ? ' · exceeded' : ''}</div>
+                  {bar(usedBefore, limit)}
+                  {result.requested_cost != null ? <div className="muted mono" style={{ fontSize: 11.5, marginTop: 5 }}>This item: <b style={{ color: 'var(--ink)' }}>{fmtNGN(result.requested_cost)}</b></div> : null}
+                </div>
+              ) : null}
+              {s.result ? <div className="s-raw" style={{ marginTop: 8 }}><details><summary>Stage result JSON</summary><CodeBlock data={s.result} /></details></div> : null}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+function EventItemRows({ items, stages, fallbackDecisions }) {
   if (!items || !items.length) {
     return <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>;
   }
+  const agentDecisions = agentItemDecisionsFromStages(stages, fallbackDecisions);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
       {items.map((it) => {
@@ -1249,11 +1490,12 @@ function EventItemRows({ items }) {
         const qty = _evtNum(it.quantity) || 1;
         const requested = _evtNum(it.requested_cost) ?? (unit != null ? unit * qty : 0);
         const approved = _evtNum(it.approved_cost);
+        const agentDecision = agentDecisionForItem(it, agentDecisions);
         return (
           <details key={it.id} style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 7 }}>
             <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto 60px 110px 16px', gap: 8, alignItems: 'center', padding: '6px 9px' }}>
               <span style={{ fontSize: 12, minWidth: 0 }}>{it.name}</span>
-              <ItemStatusBadge item={it} />
+              <AgentDecisionBadge decision={agentDecision?.decision} />
               <span className="muted mono" style={{ fontSize: 11 }}>×{qty}</span>
               <span className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{fmtNGNfull(requested)}</span>
               <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 10, textAlign: 'right' }}>▾</span>
@@ -1262,8 +1504,18 @@ function EventItemRows({ items }) {
               <div className="muted">Unit cost</div><div>{unit != null ? fmtNGNfull(unit) : '—'}</div>
               <div className="muted">Quantity</div><div>{qty}</div>
               <div className="muted">Requested</div><div>{fmtNGNfull(requested)}</div>
-              <div className="muted">Approved</div><div>{approved != null ? fmtNGNfull(approved) : '—'}</div>
-              {it.item_status != null ? <><div className="muted">Item status</div><div>{itemStatusInfo(it)?.label || String(it.item_status)}</div></> : null}
+              {agentDecision ? (
+                <>
+                  <div className="muted">Agent recommendation</div>
+                  <div>
+                    <AgentDecisionBadge decision={agentDecision.decision} />
+                    {agentDecision.recommended_approved_cost != null ? <span style={{ marginLeft: 8 }}>· {fmtNGNfull(agentDecision.recommended_approved_cost)}</span> : null}
+                  </div>
+                  {agentDecision.reason ? <><div className="muted">Agent reason</div><div style={{ whiteSpace: 'normal', lineHeight: 1.45 }}>{agentDecision.reason}</div></> : null}
+                </>
+              ) : null}
+              {it.item_status != null ? <><div className="muted">AMAN status</div><div>{itemStatusInfo(it)?.label || String(it.item_status)}</div></> : null}
+              <div className="muted">AMAN approved</div><div>{approved != null ? fmtNGNfull(approved) : '—'}</div>
               {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
               {it.category_id != null ? <><div className="muted">Category</div><div>{it.category_label || categoryLabel(it.category_id)}</div></> : null}
               {it.flags && (it.flags.active_count || it.flags.highest_severity) ? (
@@ -1275,15 +1527,7 @@ function EventItemRows({ items }) {
                   </div>
                 </>
               ) : null}
-              {(it.claim_item_id || it.tariff_id) ? (
-                <>
-                  <div className="muted">IDs</div>
-                  <div>
-                    {it.claim_item_id ? <span style={{ marginRight: 10 }}>claim: {it.claim_item_id}</span> : null}
-                    {it.tariff_id ? <span>tariff: {it.tariff_id}</span> : null}
-                  </div>
-                </>
-              ) : null}
+              {agentDecision ? <ItemAgentSteps stages={stages} itemDecision={agentDecision} /> : null}
               <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
                 <details>
                   <summary style={{ cursor: 'pointer', color: 'var(--ink-3)', fontSize: 11 }}>Raw item JSON</summary>
@@ -1406,22 +1650,22 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
                         <span>· Snapshot: {fmtNGNfull(event.total_requested_cost)}</span>
                         {when ? <span>· {timeAgo(when)}</span> : null}
                       </div>
-                      <EventItemRows items={items} />
                       <details style={{ marginTop: 8 }}>
                         <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>Event JSON</summary>
                         <CodeBlock data={event.raw_payload || event.payload_summary || event} style={{ marginTop: 6 }} />
                       </details>
                       <details open={isLatestEvent} style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
                         <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
-                          Agent run {stages.length ? `· ${stages.length} stage${stages.length === 1 ? '' : 's'}` : '· not captured for this event'}
+                          Agent run {stages.filter((s) => Number(s.n) === 1).length ? `· ${stages.filter((s) => Number(s.n) === 1).length} stage${stages.filter((s) => Number(s.n) === 1).length === 1 ? '' : 's'}` : '· not captured for this event'}
                         </summary>
                         <div style={{ marginTop: 8 }}>
                           <AgentTimeline
-                            r={{ ...r, stages }}
+                            r={{ ...r, stages: stages.filter((s) => Number(s.n) === 1) }}
                             emptyMessage="No agent run was matched to this event yet."
                           />
                         </div>
                       </details>
+                      <EventItemRows items={items} stages={stages} fallbackDecisions={r.item_decisions} />
                     </div>
                   </div>
                 );
@@ -1932,7 +2176,7 @@ function PatientDetail({ patient, loading, error, openedIds, toggleRow, onBack, 
   // full /patient-history payload (more accurate than the index aggregate).
   const counts = requests.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
   const totalRequested = requests.reduce((s, r) => s + (Number(r.requested_amount) || 0), 0);
-  const totalApproved = requests.reduce((s, r) => s + (r.status === 'approve' ? Number(r.amount_approved || 0) : 0), 0);
+  const totalApproved = requests.reduce((s, r) => s + (Number(r.amount_approved || 0)), 0);
   const header = requests[0] || {};
   return (
     <>
@@ -3660,15 +3904,21 @@ function AppInner() {
   const paValueReceived = Number(summary.intake_value ?? summary.current_snapshot_value ?? 0);
   const paValueApproved = Number(summary.total_amount_approved ?? 0);
   const paLineItems = summary.added_line_items ?? summary.current_snapshot_line_items ?? 0;
-  const decided = (summary.approved || 0) + (summary.denied || 0) + (summary.escalated || 0);
-  const approvalRate = decided ? Math.round((summary.approved / decided) * 100) : 0;
+  const approvedPaCount = Number(summary.pa_full_approved ?? summary.approved ?? 0);
+  const partialPaCount = Number(summary.pa_partial_approved || 0);
+  const rejectedPaCount = Number(summary.pa_rejected ?? summary.denied ?? 0);
+  const reviewPaCount = Number(summary.pa_review ?? summary.escalated ?? 0);
+  const pendingPaCount = (summary.pending || 0) + (summary.processing || 0);
+  const decided = approvedPaCount + partialPaCount + rejectedPaCount + reviewPaCount;
+  const approvalRate = decided ? Math.round(((approvedPaCount + partialPaCount) / decided) * 100) : 0;
   const visibleRetryableCount = filtered.filter((r) => RETRYABLE_REQUEST_STATUSES.has(r.status)).length;
   const retryableSummaryCount = (summary.pending || 0) + (summary.processing || 0) + (summary.errors || 0);
-  const outcomeSplit = [
-    { k: 'Approved', v: summary.approved || 0, c: 'var(--ok)' },
-    { k: 'Denied', v: summary.denied || 0, c: 'var(--bad)' },
-    { k: 'Escalated', v: summary.escalated || 0, c: 'var(--warn)' },
-    { k: 'Pending', v: (summary.pending || 0) + (summary.processing || 0), c: 'var(--ink-4)' },
+  const paOutcomeSplit = [
+    { k: 'Approved', v: approvedPaCount, c: 'var(--ok)' },
+    { k: 'Partial Approval', v: partialPaCount, c: 'var(--indigo)' },
+    { k: 'Rejected', v: rejectedPaCount, c: 'var(--bad)' },
+    { k: 'Escalated', v: reviewPaCount, c: 'var(--warn)' },
+    { k: 'Pending', v: pendingPaCount, c: 'var(--ink-4)' },
   ];
   const avgLatTxt = summary.avg_processing_seconds != null ? Number(summary.avg_processing_seconds).toFixed(1) : '—';
 
@@ -3827,12 +4077,12 @@ function AppInner() {
                     eventCount={summary.event_count ?? 0}
                   />
                   <MetricCard
-                    title="Decision outcomes"
-                    tip="Distribution of final decisions for this period: Approve, Deny, Escalate."
-                    desc="How the AI pipeline resolved this period's requests"
-                    chartHtml={chartDonut(outcomeSplit)}
-                    moveH={`${approvalRate}% approval rate`}
-                    moveP={`${(summary.approved ?? 0).toLocaleString()} approved, ${summary.denied ?? 0} denied, ${summary.escalated ?? 0} escalated for human review.`}
+                    title="Approval outcomes"
+                    tip="PA outcome based on item-level decisions. Mixed approve/reject PAs are counted as Partial Approval."
+                    desc="Full approvals, partial approvals, rejections and reviews"
+                    chartHtml={chartDonut(paOutcomeSplit)}
+                    moveH={`${approvalRate}% with approval`}
+                    moveP={`${approvedPaCount.toLocaleString()} fully approved, ${partialPaCount.toLocaleString()} partially approved, ${rejectedPaCount.toLocaleString()} rejected, ${reviewPaCount.toLocaleString()} escalated.`}
                   />
                   <MetricCard
                     title="Decision latency"
