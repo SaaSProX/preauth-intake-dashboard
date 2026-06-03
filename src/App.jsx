@@ -1691,6 +1691,181 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
           <CodeBlock data={r.raw_payload || r.extracted_fields} style={{ marginTop: 10 }} />
         </details>
       </div>
+      {/* PA Comments Section */}
+      <PACommentsSection requestId={r.request_id} />
+    </div>
+  );
+}
+
+/* ============================================================
+   PA Comments / Feedback Section
+   ============================================================ */
+function PACommentsSection({ requestId }) {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [newComment, setNewComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const { show: showToast } = useToast();
+
+  // Fetch comments when requestId changes
+  useEffect(() => {
+    if (!requestId) return;
+    let cancelled = false;
+
+    async function fetchComments() {
+      setLoading(true);
+      setError(null);
+      try {
+        const session = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        if (!session.token) return;
+
+        const response = await fetch(`${API_BASE_URL}/auth/pa-comments?request_id=${encodeURIComponent(requestId)}`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        if (!response.ok) {
+          throw new Error('Failed to load comments');
+        }
+        const data = await response.json();
+        if (!cancelled) {
+          setComments(data.comments || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || 'Failed to load comments');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchComments();
+    return () => { cancelled = true; };
+  }, [requestId]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const text = newComment.trim();
+    if (!text || submitting) return;
+
+    setSubmitting(true);
+    try {
+      const session = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      if (!session.token) throw new Error('Not authenticated');
+
+      const response = await fetch(`${API_BASE_URL}/auth/pa-comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.token}`,
+        },
+        body: JSON.stringify({ request_id: requestId, comment_text: text }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Failed to add comment');
+      }
+
+      const created = await response.json();
+      setComments((prev) => [created, ...prev]);
+      setNewComment('');
+      showToast('Comment added', 'ok');
+    } catch (err) {
+      showToast(err.message || 'Failed to add comment', 'bad');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function formatCommentTime(isoString) {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="sec-h" data-tip="Add feedback or notes for this PA request. Comments are visible to all team members in your organization." data-tip-align="left">
+        Comments &amp; Feedback <span className="n">{comments.length}</span>
+      </div>
+
+      {/* Add Comment Form */}
+      <form onSubmit={handleSubmit} style={{ marginTop: 10, marginBottom: 12 }}>
+        <textarea
+          value={newComment}
+          onChange={(e) => setNewComment(e.target.value)}
+          placeholder="Add a comment or feedback..."
+          disabled={submitting}
+          style={{
+            width: '100%',
+            minHeight: 72,
+            padding: '10px 12px',
+            fontFamily: 'var(--sans)',
+            fontSize: 13,
+            lineHeight: 1.5,
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            background: 'var(--bg)',
+            color: 'var(--ink)',
+            resize: 'vertical',
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <button
+            type="submit"
+            className="btn"
+            disabled={!newComment.trim() || submitting}
+            style={{ minWidth: 100 }}
+          >
+            {submitting ? 'Posting...' : 'Add Comment'}
+          </button>
+        </div>
+      </form>
+
+      {/* Comments List */}
+      {loading ? (
+        <div className="muted mono" style={{ fontSize: 12, padding: '8px 0' }}>Loading comments...</div>
+      ) : error ? (
+        <div style={{ padding: '10px 12px', background: 'var(--bad-bg)', color: 'var(--bad-ink)', border: '1px solid var(--bad-line)', borderRadius: 9, fontSize: 12, fontFamily: 'var(--mono)' }}>
+          {error}
+        </div>
+      ) : comments.length === 0 ? (
+        <div className="muted mono" style={{ fontSize: 12, padding: '8px 0' }}>No comments yet. Be the first to add feedback.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {comments.map((c) => (
+            <div
+              key={c.id}
+              style={{
+                background: 'var(--bg-2)',
+                border: '1px solid var(--line)',
+                borderRadius: 9,
+                padding: '12px 14px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>
+                  {c.user_name || c.user_email || 'Team Member'}
+                </span>
+                <span className="muted mono" style={{ fontSize: 11 }}>
+                  {formatCommentTime(c.created_at)}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink)', whiteSpace: 'pre-wrap' }}>
+                {c.comment_text}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
