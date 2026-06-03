@@ -1476,7 +1476,7 @@ function PACommentsSection({ requestId }) {
         const session = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
         if (!session.token) return;
 
-        const response = await fetch(`${API_BASE_URL}/auth/pa-comments/${encodeURIComponent(requestId)}`, {
+        const response = await fetch(`${API_BASE_URL}/auth/pa-comments?request_id=${encodeURIComponent(requestId)}`, {
           headers: { Authorization: `Bearer ${session.token}` },
         });
         if (!response.ok) {
