@@ -282,6 +282,7 @@ img, svg { display: block; }
 }
 .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .pill.approve  { background: var(--ok-bg);   color: var(--ok-ink);   border-color: var(--ok-line); }
+.pill.partial_approve { background: var(--tint); color: var(--indigo-ink); border-color: var(--indigo-soft); }
 .pill.deny     { background: var(--bad-bg);  color: var(--bad-ink);  border-color: var(--bad-line); }
 .pill.escalate { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-line); }
 .pill.pending  { background: var(--slate-bg);color: var(--slate-ink);border-color: var(--slate-line); }
@@ -589,12 +590,14 @@ img, svg { display: block; }
   border: 1px solid var(--line-2);
 }
 .decision.approve  { background: var(--ok-bg);   border-color: var(--ok-line); }
+.decision.partial_approve { background: var(--tint-2); border-color: var(--indigo-soft); }
 .decision.deny     { background: var(--bad-bg);  border-color: var(--bad-line); }
 .decision.escalate { background: var(--warn-bg); border-color: var(--warn-line); }
 .decision.pending, .decision.processing, .decision.received { background: var(--bg-2); border-color: var(--line); }
 .decision .verdict-row { display: flex; align-items: center; gap: 12px; }
 .decision .verdict { font-family: var(--mono); font-size: 22px; letter-spacing: -.01em; font-weight: 600; }
 .decision.approve .verdict { color: var(--ok-ink); }
+.decision.partial_approve .verdict { color: var(--indigo-ink); }
 .decision.deny .verdict { color: var(--bad-ink); }
 .decision.escalate .verdict { color: var(--warn-ink); }
 .decision .reason { margin: 12px 0 0; color: var(--ink-2); font-size: 13.5px; }

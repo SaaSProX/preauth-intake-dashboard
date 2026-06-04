@@ -115,6 +115,7 @@ function fmtClock(value) {
 
 const STATUS_META = {
   approve: { label: 'Approve', cls: 'approve', help: 'Agent decided to authorize the request.' },
+  partial_approve: { label: 'Partially Approved', cls: 'partial_approve', help: 'At least one line item was approved, but one or more lines were rejected or need review.' },
   deny: { label: 'Deny', cls: 'deny', help: 'Agent refused the request — usually exclusion, limit exceeded, or eligibility issue.' },
   escalate: { label: 'Escalate', cls: 'escalate', help: 'Agent flagged for human review — high cost, ambiguous, or missing data.' },
   pending: { label: 'Pending', cls: 'pending', help: 'Received but not yet picked up. Awaiting an agent run.' },
@@ -125,6 +126,7 @@ const STATUS_META = {
 function normalizeStatus(v) {
   const s = String(v || 'pending').toLowerCase();
   if (s === 'approved') return 'approve';
+  if (['partial', 'partial_approved', 'partial_approve', 'partially_approved'].includes(s)) return 'partial_approve';
   if (['denied', 'reject', 'rejected'].includes(s)) return 'deny';
   if (s === 'escalated') return 'escalate';
   return STATUS_META[s] ? s : 'pending';
@@ -768,6 +770,16 @@ function agentDecisionTotals(r, ar) {
     return acc;
   }, { requested: 0, approved: 0, denied: 0, count: 0 });
 }
+function isPartialApproval(ar, totals) {
+  const paDecision = String(ar?.pa_decision || '').toLowerCase();
+  if (['partial', 'partial_approve', 'partial_approved', 'partially_approved'].includes(paDecision)) return true;
+  const summary = asObj(ar?.item_summary);
+  const approved = _evtNum(summary.approved) ?? (totals.approved > 0 ? 1 : 0);
+  const denied = _evtNum(summary.denied) ?? (totals.denied > 0 ? 1 : 0);
+  const escalated = _evtNum(summary.escalated) ?? 0;
+  const total = _evtNum(summary.total) ?? totals.count ?? 0;
+  return approved > 0 && (denied > 0 || escalated > 0 || (total > 0 && approved < total) || totals.denied > 0);
+}
 const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
 const STAGE_TIPS = {
   Eligibility: 'Is the member valid — active, not expired, within age limit, enrollment valid?',
@@ -819,6 +831,8 @@ function mapRequest(r) {
   const diagnosis = asArr(enc.diagnosis).join(', ') || (typeof enc.diagnosis === 'string' ? enc.diagnosis : '—');
   const amountApproved = r.amount_approved ?? ar.amount_approved ?? null;
   const agentTotals = agentDecisionTotals(r, ar);
+  const partialApproval = isPartialApproval(ar, agentTotals);
+  if (partialApproval) status = 'partial_approve';
   return {
     request_id: r.request_id,
     display_request_id: r.display_request_id || r.request_id,
@@ -826,6 +840,7 @@ function mapRequest(r) {
     patient_name: r.patient_name || '',
     status,
     decision: r.decision,
+    display_decision: partialApproval ? 'Partially Approved' : r.decision,
     confidence: r.confidence || ar.confidence,
     agent_step: r.agent_step,
     plan: r.plan || '—',
@@ -1293,7 +1308,7 @@ function QueueRow({ r, selected, onSelect, onOpenPatient, canRetry, retrying, on
    ============================================================ */
 function DecisionBlock({ r }) {
   const cls = (STATUS_META[r.status] || STATUS_META.pending).cls;
-  const verdict = (r.decision || (STATUS_META[r.status] || STATUS_META.pending).label).toUpperCase();
+  const verdict = (r.display_decision || r.decision || (STATUS_META[r.status] || STATUS_META.pending).label).toUpperCase();
   let body;
   if (r.error_message) {
     body = <p className="reason">{r.error_message}</p>;
@@ -1534,7 +1549,7 @@ function StageHighlights({ stage }) {
   if (stage.n === 4) {
     return (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
-        {r.decision ? <span className="mono" style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--bg-3)', color: 'var(--ink)', border: '1px solid var(--line)', fontWeight: 600 }}>{r.decision}</span> : null}
+        {r.display_decision || r.decision ? <span className="mono" style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--bg-3)', color: 'var(--ink)', border: '1px solid var(--line)', fontWeight: 600 }}>{r.display_decision || r.decision}</span> : null}
         {r.confidence ? <span className="muted">Confidence: <b style={{ color: 'var(--ink)' }}>{r.confidence}</b></span> : null}
         {r.amount_approved != null ? <span className="muted">Approved: <b style={{ color: 'var(--ink)' }}>{fmtNGNfull(r.amount_approved)}</b></span> : null}
         {r.no_preauth_required ? <span style={{ color: 'var(--ok-ink)' }}>· No PA required</span> : null}
@@ -2380,6 +2395,7 @@ function HealthView({
    ============================================================ */
 const OUTCOME_DOT = {
   approve: 'var(--ok)',
+  partial_approve: 'var(--indigo)',
   deny: 'var(--bad)',
   escalate: 'var(--warn)',
   processing: 'var(--indigo)',
@@ -2388,11 +2404,11 @@ const OUTCOME_DOT = {
   error: 'var(--bad)',
 };
 const OUTCOME_LABEL = {
-  approve: 'approve', deny: 'deny', escalate: 'escalate',
+  approve: 'approve', partial_approve: 'partial approval', deny: 'deny', escalate: 'escalate',
   processing: 'processing', pending: 'pending', received: 'received', error: 'error',
 };
 function OutcomePills({ counts, size = 'sm' }) {
-  const items = ['approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error']
+  const items = ['approve', 'partial_approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error']
     .map((k) => [k, counts?.[k] || 0])
     .filter(([, n]) => n > 0);
   if (!items.length) return <span className="muted mono" style={{ fontSize: 11 }}>—</span>;
@@ -4193,7 +4209,7 @@ function AppInner() {
     const q = query.trim().toLowerCase();
     return requests.filter((r) => {
       const okS = statusFilter === 'all' || r.status === statusFilter;
-      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.decision].filter(Boolean).join(' ').toLowerCase();
+      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.display_decision, r.decision].filter(Boolean).join(' ').toLowerCase();
       return okS && (!q || blob.includes(q));
     });
   }, [requests, query, statusFilter]);
@@ -4281,7 +4297,7 @@ function AppInner() {
   const isPlatformAdmin = (session.role === 'admin') && ((session.org_name || '').toUpperCase() === 'SAASPRO');
   const isDrillIn = !!(viewOrgId && viewOrgId.name !== session.org_name);
   const canRetryRequests = session.role === 'admin';
-  const statusFilters = ['all', 'approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
+  const statusFilters = ['all', 'approve', 'partial_approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
 
   // chart inputs from the real daily series + summary
   const periodRequestCount = summary.total ?? requests.length;
