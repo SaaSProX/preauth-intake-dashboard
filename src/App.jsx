@@ -725,6 +725,49 @@ function requestedAmount(r, raw) {
   const total = items.reduce((s, it) => s + itemReqCost(it), 0);
   return total || Number(p.total_requested_cost) || Number(r.estimated_cost) || 0;
 }
+function decisionRequestedAmount(r, raw, ar) {
+  const itemSummary = asObj(ar?.item_summary);
+  const fromSummary = _evtNum(itemSummary.requested_amount);
+  if (fromSummary != null) return fromSummary;
+  const itemDecisions = asArr(ar?.item_decisions);
+  const fromDecisions = itemDecisions.reduce((sum, it) => sum + (_evtNum(it?.requested_cost) ?? 0), 0);
+  if (fromDecisions > 0) return fromDecisions;
+  const itemsAddedTotal = asArr(asObj(raw).submission?.items_added)
+    .reduce((sum, it) => sum + itemReqCost(it), 0);
+  return itemsAddedTotal || requestedAmount(r, raw);
+}
+function agentDecisionTotals(r, ar) {
+  const byClaimItem = new Map();
+  for (const log of asArr(r.agent_logs)) {
+    if (Number(log?.agent_num) !== 3) continue;
+    for (const item of asArr(asObj(log.result).item_decisions)) {
+      const id = item?.claim_item_id ?? `${item?.item_name || 'item'}:${item?.requested_cost || ''}:${byClaimItem.size}`;
+      byClaimItem.set(String(id), item);
+    }
+  }
+
+  const items = byClaimItem.size ? Array.from(byClaimItem.values()) : asArr(ar?.item_decisions);
+  if (!items.length) {
+    const summary = asObj(ar?.item_summary);
+    return {
+      requested: _evtNum(summary.requested_amount) ?? 0,
+      approved: _evtNum(summary.approved_amount) ?? _evtNum(ar?.amount_approved) ?? 0,
+      denied: _evtNum(summary.denied_amount) ?? 0,
+      count: _evtNum(summary.total) ?? 0,
+    };
+  }
+
+  return items.reduce((acc, item) => {
+    const decision = String(item?.decision || item?.recommendation || '').toLowerCase();
+    const requested = _evtNum(item?.requested_cost) ?? 0;
+    const approved = _evtNum(item?.recommended_approved_cost) ?? 0;
+    acc.requested += requested;
+    acc.count += 1;
+    if (['approve', 'approved'].includes(decision)) acc.approved += approved;
+    if (['deny', 'denied', 'reject', 'rejected'].includes(decision)) acc.denied += requested;
+    return acc;
+  }, { requested: 0, approved: 0, denied: 0, count: 0 });
+}
 const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
 const STAGE_TIPS = {
   Eligibility: 'Is the member valid — active, not expired, within age limit, enrollment valid?',
@@ -774,6 +817,8 @@ function mapRequest(r) {
   if (isLive && !r.decision) status = 'received';
   const items = itemsFromPayload(raw);
   const diagnosis = asArr(enc.diagnosis).join(', ') || (typeof enc.diagnosis === 'string' ? enc.diagnosis : '—');
+  const amountApproved = r.amount_approved ?? ar.amount_approved ?? null;
+  const agentTotals = agentDecisionTotals(r, ar);
   return {
     request_id: r.request_id,
     display_request_id: r.display_request_id || r.request_id,
@@ -788,7 +833,11 @@ function mapRequest(r) {
     item_description: r.item_description || '—',
     line_item_count: r.line_item_count || items.length,
     requested_amount: requestedAmount(r, raw),
-    amount_approved: r.amount_approved ?? ar.amount_approved ?? null,
+    decision_requested_amount: decisionRequestedAmount(r, raw, ar),
+    amount_approved: amountApproved,
+    agent_total_requested_amount: agentTotals.requested,
+    agent_total_approved_amount: agentTotals.approved,
+    agent_total_denied_amount: agentTotals.denied,
     facility: r.facility || '—',
     requesting_provider: providerLabel(r.requesting_provider) || '—',
     processing_seconds: r.processing_seconds,
@@ -805,6 +854,9 @@ function mapRequest(r) {
     flags: asArr(ar.flags),
     items,
     item_decisions: asArr(ar.item_decisions),
+    aman_prior_context: Object.keys(asObj(ar.aman_prior_context)).length
+      ? asObj(ar.aman_prior_context)
+      : asObj(asObj(ar.agent3).aman_prior_context),
     note: isLive ? 'Live HMO payload received. Automated decisioning is paused pending mapping validation for this corporation.' : '',
     stages: deriveStages(r),
     raw_payload: r.raw_payload,
@@ -1256,8 +1308,14 @@ function DecisionBlock({ r }) {
         <p className="reason">{r.reason}</p>
         {r.amount_approved != null && (
           <div className="amt-line">
-            <div><span className="lab">Requested</span>{fmtNGNfull(r.requested_amount)}</div>
-            <div><span className="lab">Approved</span><b>{fmtNGNfull(r.amount_approved)}</b></div>
+            <div><span className="lab">Total requested</span>{fmtNGNfull(r.requested_amount)}</div>
+            <div><span className="lab">Agent approved</span><b>{fmtNGNfull(r.agent_total_approved_amount ?? r.amount_approved)}</b></div>
+            {r.requested_amount !== (r.decision_requested_amount ?? r.requested_amount) || r.agent_total_denied_amount > 0 ? (
+              <div className="amt-note">
+                {r.agent_total_denied_amount > 0 ? <>Agent rejected: {fmtNGNfull(r.agent_total_denied_amount)} · </> : null}
+                Latest submission: {fmtNGNfull(r.decision_requested_amount ?? r.requested_amount)} requested · {fmtNGNfull(r.amount_approved)} agent approved
+              </div>
+            ) : null}
           </div>
         )}
       </>
@@ -1574,6 +1632,32 @@ function ItemAgentSteps({ stages, itemDecision }) {
     </details>
   );
 }
+function PriorAmanContext({ context }) {
+  const ctx = asObj(context);
+  const approvedAmount = _evtNum(ctx.approved_amount);
+  const rejectedAmount = _evtNum(ctx.rejected_requested_amount);
+  const approvedCount = _evtNum(ctx.approved_count) || 0;
+  const rejectedCount = _evtNum(ctx.rejected_count) || 0;
+  if (!approvedCount && !rejectedCount) return null;
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: '7px 9px',
+      border: '1px solid var(--line)',
+      borderRadius: 7,
+      background: 'var(--bg)',
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 10,
+      fontSize: 11,
+      fontFamily: 'var(--mono)',
+      color: 'var(--ink-2)',
+    }}>
+      {approvedCount ? <span>AMAN already approved: <b style={{ color: 'var(--ink)' }}>{fmtNGNfull(approvedAmount || 0)}</b> · {approvedCount} line{approvedCount === 1 ? '' : 's'}</span> : null}
+      {rejectedCount ? <span>AMAN already rejected: <b style={{ color: 'var(--ink)' }}>{fmtNGNfull(rejectedAmount || 0)}</b> requested · {rejectedCount} line{rejectedCount === 1 ? '' : 's'}</span> : null}
+    </div>
+  );
+}
 function EventItemRows({ items, stages, fallbackDecisions }) {
   if (!items || !items.length) {
     return <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>;
@@ -1751,6 +1835,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
                         <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>Event JSON</summary>
                         <CodeBlock data={event.raw_payload || event.payload_summary || event} style={{ marginTop: 6 }} />
                       </details>
+                      {isLatestEvent ? <PriorAmanContext context={r.aman_prior_context} /> : null}
                       <details open={isLatestEvent} style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
                         <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
                           Agent run {stages.filter((s) => Number(s.n) === 1).length ? `· ${stages.filter((s) => Number(s.n) === 1).length} stage${stages.filter((s) => Number(s.n) === 1).length === 1 ? '' : 's'}` : '· not captured for this event'}
