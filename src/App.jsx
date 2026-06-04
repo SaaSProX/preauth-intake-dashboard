@@ -320,7 +320,8 @@ function careTypeLabel(value) {
 }
 function closeNumberMatch(a, b) {
   const x = _evtNum(a); const y = _evtNum(b);
-  return x !== null && y !== null && Math.abs(x - y) < 0.01;
+  if (x === null || y === null) return false;
+  return Math.abs(x - y) < 0.01 || Math.round(x) === Math.round(y);
 }
 function itemRequestedCost(it) {
   const direct = _evtNum(it?.requested_cost) ?? _evtNum(it?.estimated_cost) ?? _evtNum(it?.cost) ?? _evtNum(it?.amount);
