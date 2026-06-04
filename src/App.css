@@ -429,10 +429,11 @@ img, svg { display: block; }
 }
 .queue .qhead, .qrow {
   display: grid;
-  grid-template-columns: 168px 1.4fr 96px 1fr 130px 120px 92px 74px;
+  grid-template-columns: 168px 1.35fr 96px minmax(0, 1fr) 124px 144px 88px 70px;
   gap: 14px; align-items: center;
   padding: 12px 18px;
 }
+.qrow > * { min-width: 0; }
 .queue .qhead { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); background: var(--bg-2); border-bottom: 1px solid var(--line); }
 .qrow { border-bottom: 1px solid var(--line); cursor: pointer; transition: background .12s; }
 .qrow:last-child { border-bottom: none; }
@@ -594,8 +595,9 @@ img, svg { display: block; }
 .decision.deny     { background: var(--bad-bg);  border-color: var(--bad-line); }
 .decision.escalate { background: var(--warn-bg); border-color: var(--warn-line); }
 .decision.pending, .decision.processing, .decision.received { background: var(--bg-2); border-color: var(--line); }
-.decision .verdict-row { display: flex; align-items: center; gap: 12px; }
-.decision .verdict { font-family: var(--mono); font-size: 22px; letter-spacing: -.01em; font-weight: 600; }
+.decision .verdict-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.decision .verdict { font-family: var(--mono); font-size: 22px; line-height: 1.15; letter-spacing: -.01em; font-weight: 600; flex: 1 1 220px; min-width: 0; }
+.decision .verdict-row .pill, .decision .verdict-row .conf { margin-top: 2px; }
 .decision.approve .verdict { color: var(--ok-ink); }
 .decision.partial_approve .verdict { color: var(--indigo-ink); }
 .decision.deny .verdict { color: var(--bad-ink); }
