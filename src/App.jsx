@@ -364,6 +364,36 @@ function eventSnapshotItems(event) {
       : asArr(extracted?.requested_items);
   return pa.map((it, idx) => normalizeEventItem(event, it, idx));
 }
+function itemLookupKeys(it) {
+  const keys = [];
+  if (it?.claim_item_id != null) keys.push(`claim:${it.claim_item_id}`);
+  if (it?.tariff_id != null) keys.push(`tariff:${it.tariff_id}|${stableEventItemKey(it)}`);
+  keys.push(`stable:${stableEventItemKey(it)}`);
+  return keys;
+}
+function latestAmanItemLookup(events) {
+  const lookup = new Map();
+  asArr(events).forEach((event) => {
+    eventSnapshotItems(event).forEach((item) => {
+      const enriched = {
+        ...item,
+        latest_event_id: event?.event_id || event?.id || null,
+        latest_event_sequence: event?.event_sequence ?? null,
+        latest_event_time: event?.submitted_at || event?.occurred_at || event?.created_at || null,
+      };
+      itemLookupKeys(item).forEach((key) => lookup.set(key, enriched));
+    });
+  });
+  return lookup;
+}
+function latestAmanItemFor(item, lookup) {
+  if (!lookup || !lookup.size) return null;
+  for (const key of itemLookupKeys(item)) {
+    const match = lookup.get(key);
+    if (match) return match;
+  }
+  return null;
+}
 function stableEventItemKey(it) {
   if (it?.id != null && /^\d+$/.test(String(it.id))) return `id:${it.id}`;
   return [
@@ -1673,7 +1703,7 @@ function PriorAmanContext({ context }) {
     </div>
   );
 }
-function EventItemRows({ items, stages, fallbackDecisions }) {
+function EventItemRows({ items, stages, fallbackDecisions, amanLookup, currentEvent }) {
   if (!items || !items.length) {
     return <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>No item details captured for this event.</div>;
   }
@@ -1684,8 +1714,19 @@ function EventItemRows({ items, stages, fallbackDecisions }) {
         const unit = _evtNum(it.unit_cost);
         const qty = _evtNum(it.quantity) || 1;
         const requested = _evtNum(it.requested_cost) ?? (unit != null ? unit * qty : 0);
-        const approved = _evtNum(it.approved_cost);
+        const latestAmanItem = latestAmanItemFor(it, amanLookup);
+        const amanItem = latestAmanItem || it;
+        const approved = _evtNum(amanItem.approved_cost);
         const agentDecision = agentDecisionForItem(it, agentDecisions);
+        const currentSeq = _evtNum(currentEvent?.event_sequence);
+        const latestSeq = _evtNum(latestAmanItem?.latest_event_sequence);
+        const fromLaterAmanSnapshot = Boolean(
+          latestAmanItem
+          && (
+            (currentSeq != null && latestSeq != null && latestSeq > currentSeq)
+            || (currentSeq == null && latestAmanItem.latest_event_id && latestAmanItem.latest_event_id !== (currentEvent?.event_id || currentEvent?.id))
+          )
+        );
         return (
           <details key={it.id} style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 7 }}>
             <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto 60px 110px 16px', gap: 8, alignItems: 'center', padding: '6px 9px' }}>
@@ -1709,8 +1750,16 @@ function EventItemRows({ items, stages, fallbackDecisions }) {
                   {agentDecision.reason ? <><div className="muted">Agent reason</div><div style={{ whiteSpace: 'normal', lineHeight: 1.45 }}>{agentDecision.reason}</div></> : null}
                 </>
               ) : null}
-              {it.item_status != null ? <><div className="muted">AMAN status</div><div>{itemStatusInfo(it)?.label || String(it.item_status)}</div></> : null}
+              {amanItem.item_status != null ? <><div className="muted">AMAN status</div><div>{itemStatusInfo(amanItem)?.label || String(amanItem.item_status)}</div></> : null}
               <div className="muted">AMAN approved</div><div>{approved != null ? fmtNGNfull(approved) : '—'}</div>
+              {fromLaterAmanSnapshot ? (
+                <>
+                  <div className="muted">AMAN snapshot</div>
+                  <div style={{ whiteSpace: 'normal', lineHeight: 1.45 }}>
+                    Latest known value from event {latestAmanItem.latest_event_sequence || latestAmanItem.latest_event_id || '—'}{latestAmanItem.latest_event_time ? ` · ${timeAgo(latestAmanItem.latest_event_time)}` : ''}
+                  </div>
+                </>
+              ) : null}
               {it.pricing_source ? <><div className="muted">Pricing source</div><div>{it.pricing_source}</div></> : null}
               {it.category_id != null ? <><div className="muted">Category</div><div>{it.category_label || categoryLabel(it.category_id)}</div></> : null}
               {it.flags && (it.flags.active_count || it.flags.highest_severity) ? (
@@ -1739,6 +1788,7 @@ function EventItemRows({ items, stages, fallbackDecisions }) {
 function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient, canSendDecision, sendingDecision, onSendDecision }) {
   if (!r) return null;
   const eventRuns = attachStageRunsToEvents(paEvents || [], r.stages || []);
+  const amanLookup = latestAmanItemLookup(eventRuns.map(({ event }) => event));
   const firstExistingItems = eventRuns.length ? existingItemsFromFirstEvent(eventRuns[0].event) : [];
   return (
     <div className="detail">
@@ -1824,7 +1874,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
                       <span>{firstExistingItems.length} line item{firstExistingItems.length === 1 ? '' : 's'}</span>
                       <span>· Already on this PA before our first captured event</span>
                     </div>
-                    <EventItemRows items={firstExistingItems} />
+                    <EventItemRows items={firstExistingItems} amanLookup={amanLookup} currentEvent={eventRuns[0]?.event} />
                   </div>
                 </div>
               ) : null}
@@ -1862,7 +1912,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
                           />
                         </div>
                       </details>
-                      <EventItemRows items={items} stages={stages} fallbackDecisions={r.item_decisions} />
+                      <EventItemRows items={items} stages={stages} fallbackDecisions={r.item_decisions} amanLookup={amanLookup} currentEvent={event} />
                     </div>
                   </div>
                 );
