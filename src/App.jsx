@@ -1912,7 +1912,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
                           />
                         </div>
                       </details>
-                      <EventItemRows items={items} stages={stages} fallbackDecisions={r.item_decisions} amanLookup={amanLookup} currentEvent={event} />
+                      <EventItemRows items={items} stages={stages} fallbackDecisions={isLatestEvent ? r.item_decisions : []} amanLookup={amanLookup} currentEvent={event} />
                     </div>
                   </div>
                 );
