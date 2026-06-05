@@ -1785,7 +1785,7 @@ function EventItemRows({ items, stages, fallbackDecisions, amanLookup, currentEv
     </div>
   );
 }
-function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient, canSendDecision, sendingDecision, onSendDecision }) {
+function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient, canSendDecision, sendingDecision, onSendDecision, orgId }) {
   if (!r) return null;
   const eventRuns = attachStageRunsToEvents(paEvents || [], r.stages || []);
   const amanLookup = latestAmanItemLookup(eventRuns.map(({ event }) => event));
@@ -1939,7 +1939,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
         </details>
       </div>
       {/* PA Comments Section */}
-      <PACommentsSection requestId={r.request_id} />
+      <PACommentsSection requestId={r.request_id} orgId={orgId} />
     </div>
   );
 }
@@ -1947,7 +1947,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
 /* ============================================================
    PA Comments / Feedback Section
    ============================================================ */
-function PACommentsSection({ requestId }) {
+function PACommentsSection({ requestId, orgId }) {
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1967,7 +1967,10 @@ function PACommentsSection({ requestId }) {
         const session = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
         if (!session.token) return;
 
-        const response = await fetch(`${API_BASE_URL}/auth/pa-comments?request_id=${encodeURIComponent(requestId)}`, {
+        const qs = new URLSearchParams();
+        qs.set('request_id', requestId);
+        if (orgId) qs.set('org_id', String(orgId));
+        const response = await fetch(`${API_BASE_URL}/auth/pa-comments?${qs.toString()}`, {
           headers: { Authorization: `Bearer ${session.token}` },
         });
         if (!response.ok) {
@@ -1990,7 +1993,7 @@ function PACommentsSection({ requestId }) {
 
     fetchComments();
     return () => { cancelled = true; };
-  }, [requestId]);
+  }, [requestId, orgId]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2008,7 +2011,7 @@ function PACommentsSection({ requestId }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.token}`,
         },
-        body: JSON.stringify({ request_id: requestId, comment_text: text }),
+        body: JSON.stringify({ request_id: requestId, comment_text: text, ...(orgId ? { org_id: orgId } : {}) }),
       });
 
       if (!response.ok) {
@@ -2116,7 +2119,7 @@ function PACommentsSection({ requestId }) {
     </div>
   );
 }
-function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient, canSendDecision, sendingDecision, onSendDecision }) {
+function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient, canSendDecision, sendingDecision, onSendDecision, orgId }) {
   return (
     <>
       <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} />
@@ -2124,7 +2127,7 @@ function Drawer({ request, open, onClose, siblings, onSelectSibling, paEvents, p
         <button className="icon-btn dclose" onClick={onClose} aria-label="Close">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
-        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} paEvents={paEvents} paEventsLoading={paEventsLoading} paEventsError={paEventsError} onOpenPatient={onOpenPatient} canSendDecision={canSendDecision} sendingDecision={sendingDecision} onSendDecision={onSendDecision} /> : null}</div></div>
+        <div className="dwrap"><div id="drawer-body">{open && request ? <DetailView r={request} siblings={siblings} onSelectSibling={onSelectSibling} paEvents={paEvents} paEventsLoading={paEventsLoading} paEventsError={paEventsError} onOpenPatient={onOpenPatient} canSendDecision={canSendDecision} sendingDecision={sendingDecision} onSendDecision={onSendDecision} orgId={orgId} /> : null}</div></div>
       </aside>
     </>
   );
@@ -4671,6 +4674,7 @@ function AppInner() {
         canSendDecision={false}
         sendingDecision={selected ? sendingDecisionIds.has(selected.request_id) : false}
         onSendDecision={sendAmanDecision}
+        orgId={viewOrgId?.id}
       />
     </div>
   );
