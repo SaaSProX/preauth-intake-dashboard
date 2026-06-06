@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, createContext, useContext, useCallback, useRef } from 'react';
 import { AlertTriangle, CheckCircle2, Radio, RefreshCw, Unplug } from 'lucide-react';
 import { PatientReportSheet } from './report.jsx';
+import { AccuracyView, AccuracyDetailDrawer, WeeklyQaReportSheet } from './accuracy.jsx';
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
@@ -2239,6 +2240,7 @@ function StatusBar({ session, role, onRole, refreshedLabel, isPlatformAdmin, org
 }
 const NAV = [
   { id: 'intake', label: 'Pre-Auth Intake', live: true },
+  { id: 'accuracy', label: 'Agent vs AMAN Accuracy', live: true },
   { id: 'health', label: 'Integration Health', live: true },
   { id: 'audit', label: 'Audit Trail', live: true },
   { id: 'patients', label: 'Patients', live: true },
@@ -3481,6 +3483,14 @@ function AppInner() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
   const [auditQuery, setAuditQuery] = useState('');
+  // Agent vs AMAN Accuracy (SAA-52) — see src/accuracy.jsx
+  const [accuracy, setAccuracy] = useState(null);
+  const [accuracyLoading, setAccuracyLoading] = useState(false);
+  const [accuracyError, setAccuracyError] = useState('');
+  const [accuracySelected, setAccuracySelected] = useState(null);   // record currently in the side-by-side drawer
+  const [accuracyReportMode, setAccuracyReportMode] = useState(null); // mode key when the Weekly QA Report portal is staged for print
+  const [accuracyDateFrom, setAccuracyDateFrom] = useState('');     // ISO yyyy-mm-dd, '' = backend default (last 7d)
+  const [accuracyDateTo, setAccuracyDateTo] = useState('');
   const [team, setTeam] = useState(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState('');
@@ -3722,6 +3732,54 @@ function AppInner() {
       setAudit(data);
     } catch (err) { setAuditError(err.message || 'Could not load audit trail'); }
     finally { setAuditLoading(false); }
+  }
+  async function loadAccuracy({ from, to } = {}) {
+    if (!session?.token) return;
+    setAccuracyLoading(true);
+    setAccuracyError('');
+    try {
+      const params = new URLSearchParams();
+      if (viewOrgId) params.set('org_id', String(viewOrgId.id));
+      const f = from !== undefined ? from : accuracyDateFrom;
+      const t = to !== undefined ? to : accuracyDateTo;
+      if (f) params.set('date_from', f);
+      if (t) params.set('date_to', t);
+      setAccuracy(await apiRequest('/auth/qa/accuracy?' + params.toString()));
+    } catch (err) { setAccuracyError(err.message || 'Could not load accuracy data'); }
+    finally { setAccuracyLoading(false); }
+  }
+  async function downloadWeeklyQaReport(mode) {
+    setAccuracyReportMode(mode || 'all');
+    // Title swap so the OS "Save as PDF" dialog suggests a useful filename.
+    // Cadence is derived from window length so daily / weekly / monthly all
+    // get the right filename without us having to thread cadence here.
+    const orgLabel = (viewOrgId?.name || session?.org_name || 'AMAN').replace(/\s+/g, '_');
+    const winFrom = accuracy?.window?.from || '';
+    const winTo = accuracy?.window?.to || '';
+    let cadenceLabel = 'QA_Report';
+    if (winFrom && winTo) {
+      const days = Math.round((new Date(winTo).getTime() - new Date(winFrom).getTime()) / 86_400_000) + 1;
+      cadenceLabel = days <= 1 ? 'Daily_QA_Report' : days <= 8 ? 'Weekly_QA_Report' : days <= 32 ? 'Monthly_QA_Report' : 'QA_Report';
+    }
+    const originalTitle = document.title;
+    document.title = `${orgLabel}_${cadenceLabel}_${winFrom}_${winTo}`;
+    const restore = () => { document.title = originalTitle; window.removeEventListener('afterprint', restore); setAccuracyReportMode(null); };
+    window.addEventListener('afterprint', restore);
+    setTimeout(restore, 30_000);
+    // Give React a tick to mount the print portal before triggering print.
+    await new Promise((r) => setTimeout(r, 200));
+    try {
+      await apiRequest('/auth/audit/log-event', {
+        method: 'POST',
+        body: {
+          event_type: 'qa_report_download',
+          target_kind: 'qa_report',
+          target_id: `${winFrom}..${winTo}:${mode || 'all'}`,
+          metadata: { mode: mode || 'all', window: { from: winFrom, to: winTo } },
+        },
+      });
+    } catch (_) { /* audit failure shouldn't block the print */ }
+    window.print();
   }
   async function loadTeam() {
     if (!session?.token) return;
@@ -4183,6 +4241,7 @@ function AppInner() {
     if (activeNav === 'onboarding' && !orgs) loadOrgs();
     if (activeNav === 'patients' && !patients) loadPatients();
     if (activeNav === 'support') refreshSupport();
+    if (activeNav === 'accuracy' && !accuracy) loadAccuracy();
     // eslint-disable-next-line
   }, [session?.token, activeNav, viewOrgId]);
 
@@ -4619,7 +4678,25 @@ function AppInner() {
           </section>
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
-            {activeNav === 'health' ? (
+            {activeNav === 'accuracy' ? (
+              <AccuracyView
+                data={accuracy}
+                loading={accuracyLoading}
+                error={accuracyError}
+                onRefresh={() => loadAccuracy()}
+                onOpenRow={(r) => { setAccuracySelected(r); setDrawerOpen(true); }}
+                onDownloadReport={(mode) => downloadWeeklyQaReport(mode)}
+                isAdmin={role === 'admin' && !isDrillIn}
+                period={accuracy?.window?.label}
+                dateFrom={accuracyDateFrom}
+                dateTo={accuracyDateTo}
+                onDateChange={(from, to) => {
+                  setAccuracyDateFrom(from || '');
+                  setAccuracyDateTo(to || '');
+                  loadAccuracy({ from: from || '', to: to || '' });
+                }}
+              />
+            ) : activeNav === 'health' ? (
               <HealthView
                 data={health}
                 loading={healthLoading}
@@ -4661,21 +4738,49 @@ function AppInner() {
       </main>
 
       <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
-      <Drawer
-        request={selected}
-        siblings={siblings}
-        onSelectSibling={openRequest}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        paEvents={eventsForSelected}
-        paEventsLoading={paEvents.loading}
-        paEventsError={paEvents.error}
-        onOpenPatient={(pid) => { setDrawerOpen(false); navigateTo({ nav: 'patients', patient_id: pid }); }}
-        canSendDecision={false}
-        sendingDecision={selected ? sendingDecisionIds.has(selected.request_id) : false}
-        onSendDecision={sendAmanDecision}
-        orgId={viewOrgId?.id}
-      />
+      {activeNav === 'accuracy' ? (
+        <>
+          <div className={`drawer-scrim ${drawerOpen ? 'open' : ''}`} onClick={() => { setDrawerOpen(false); setAccuracySelected(null); }} />
+          <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
+            <button className="icon-btn dclose" onClick={() => { setDrawerOpen(false); setAccuracySelected(null); }} aria-label="Close">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+            <div className="dwrap"><div id="drawer-body">
+              {drawerOpen && accuracySelected ? (
+                <AccuracyDetailDrawer
+                  r={accuracySelected}
+                  tolerance={accuracy?.params?.tolerance ?? 0.05}
+                  isAdmin={role === 'admin' && !isDrillIn}
+                />
+              ) : null}
+            </div></div>
+          </aside>
+        </>
+      ) : (
+        <Drawer
+          request={selected}
+          siblings={siblings}
+          onSelectSibling={openRequest}
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          paEvents={eventsForSelected}
+          paEventsLoading={paEvents.loading}
+          paEventsError={paEvents.error}
+          onOpenPatient={(pid) => { setDrawerOpen(false); navigateTo({ nav: 'patients', patient_id: pid }); }}
+          canSendDecision={false}
+          sendingDecision={selected ? sendingDecisionIds.has(selected.request_id) : false}
+          onSendDecision={sendAmanDecision}
+          orgId={viewOrgId?.id}
+        />
+      )}
+      {accuracyReportMode ? (
+        <WeeklyQaReportSheet
+          data={accuracy}
+          mode={accuracyReportMode}
+          session={session}
+          orgName={viewOrgId?.name || session.org_name}
+        />
+      ) : null}
     </div>
   );
 }
