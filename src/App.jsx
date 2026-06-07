@@ -5,6 +5,7 @@ import { AccuracyView, AccuracyDetailDrawer, WeeklyQaReportSheet } from './accur
 
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
+const SHOW_ACCURACY_DASHBOARD = import.meta.env.VITE_SHOW_ACCURACY_DASHBOARD === 'true';
 
 function normalizeApiBaseUrl(value) {
   const t = String(value || '').trim();
@@ -2240,7 +2241,7 @@ function StatusBar({ session, role, onRole, refreshedLabel, isPlatformAdmin, org
 }
 const NAV = [
   { id: 'intake', label: 'Pre-Auth Intake', live: true },
-  { id: 'accuracy', label: 'Agent vs AMAN Accuracy', live: true },
+  ...(SHOW_ACCURACY_DASHBOARD ? [{ id: 'accuracy', label: 'Agent vs AMAN Accuracy', live: true }] : []),
   { id: 'health', label: 'Integration Health', live: true },
   { id: 'audit', label: 'Audit Trail', live: true },
   { id: 'patients', label: 'Patients', live: true },
@@ -3447,7 +3448,10 @@ function AppInner() {
   const [writebackNotice, setWritebackNotice] = useState('');
   const [writebackError, setWritebackError] = useState('');
   const [activeNav, setActiveNav] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get('nav') || 'intake'; }
+    try {
+      const requestedNav = new URLSearchParams(window.location.search).get('nav') || 'intake';
+      return requestedNav === 'accuracy' && !SHOW_ACCURACY_DASHBOARD ? 'intake' : requestedNav;
+    }
     catch { return 'intake'; }
   });
   // Patients page state — list + detail share this single view, switched by
@@ -4241,7 +4245,7 @@ function AppInner() {
     if (activeNav === 'onboarding' && !orgs) loadOrgs();
     if (activeNav === 'patients' && !patients) loadPatients();
     if (activeNav === 'support') refreshSupport();
-    if (activeNav === 'accuracy' && !accuracy) loadAccuracy();
+    if (SHOW_ACCURACY_DASHBOARD && activeNav === 'accuracy' && !accuracy) loadAccuracy();
     // eslint-disable-next-line
   }, [session?.token, activeNav, viewOrgId]);
 
@@ -4678,7 +4682,7 @@ function AppInner() {
           </section>
         ) : (
           <section id="view-stub" style={{ paddingBottom: 120 }}>
-            {activeNav === 'accuracy' ? (
+            {SHOW_ACCURACY_DASHBOARD && activeNav === 'accuracy' ? (
               <AccuracyView
                 data={accuracy}
                 loading={accuracyLoading}
@@ -4738,7 +4742,7 @@ function AppInner() {
       </main>
 
       <AskBar context={activeNav === 'intake' ? 'this queue' : 'this view'} />
-      {activeNav === 'accuracy' ? (
+      {SHOW_ACCURACY_DASHBOARD && activeNav === 'accuracy' ? (
         <>
           <div className={`drawer-scrim ${drawerOpen ? 'open' : ''}`} onClick={() => { setDrawerOpen(false); setAccuracySelected(null); }} />
           <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
