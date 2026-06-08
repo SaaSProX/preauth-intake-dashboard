@@ -247,21 +247,91 @@ function refTail(s) {
   return parts[parts.length - 1] || s;
 }
 
+function lineDecisionFromItem(item, parent) {
+  const agent = item?.agent_decision || null;
+  const status = String(item?.aman_status || '').toLowerCase();
+  const aman =
+    status === 'approved' ? 'APPROVE' :
+    status === 'rejected' ? 'DENY' :
+    status === 'queried' ? 'ESCALATE' :
+    null;
+
+  if (!agent && !aman) {
+    return { bucket: 'pending_aman', category: null };
+  }
+  if (!agent) {
+    return { bucket: 'agent_skipped', category: null };
+  }
+  if (!aman) {
+    return { bucket: 'pending_aman', category: null };
+  }
+  if (agent !== aman) {
+    return {
+      bucket: 'mismatched',
+      category: agent === 'DENY' && aman === 'APPROVE'
+        ? 'aman_over'
+        : agent === 'APPROVE' && aman === 'DENY'
+          ? 'agent_over'
+          : parent?.mismatch_category || 'coverage',
+    };
+  }
+  if (agent === 'APPROVE') {
+    const agentAmount = Number(item?.agent_recommended_cost || 0);
+    const amanAmount = Number(item?.aman_approved_cost || 0);
+    const base = Math.max(Math.abs(agentAmount), Math.abs(amanAmount), 1);
+    if (Math.abs(agentAmount - amanAmount) / base > 0.05) {
+      return { bucket: 'mismatched', category: 'amount' };
+    }
+  }
+  return { bucket: 'matched', category: null };
+}
+
+function rowsFromRecords(records) {
+  return records.flatMap((r) => {
+    const items = Array.isArray(r.items_compare) && r.items_compare.length
+      ? r.items_compare
+      : [{
+          name: r.item_description || '—',
+          agent_decision: r.agent_decision,
+          aman_status: r.aman_decision === 'APPROVE' ? 'approved' : r.aman_decision === 'DENY' ? 'rejected' : r.aman_decision === 'ESCALATE' ? 'queried' : null,
+          agent_recommended_cost: r.agent_amount,
+          aman_approved_cost: r.aman_amount,
+        }];
+
+    return items.map((item, index) => {
+      const line = lineDecisionFromItem(item, r);
+      return {
+        ...r,
+        line_key: `${r.request_id || 'pa'}-${item.claim_item_id || index}`,
+        line_index: index + 1,
+        line_count: items.length,
+        line_item: item,
+        line_bucket: line.bucket,
+        line_mismatch_category: line.category,
+      };
+    });
+  });
+}
+
 function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
-  const PER_PAGE = 8;
+  const PER_PAGE = 14;
   const all = useMemo(() => {
     let recs = recordsForMode(records, state.mode);
-    if (state.onlyMismatch) recs = recs.filter((r) => r.bucket === 'mismatched');
-    if (state.category) recs = recs.filter((r) => r.mismatch_category === state.category);
+    let rows = rowsFromRecords(recs);
+    if (state.onlyMismatch) rows = rows.filter((r) => r.line_bucket === 'mismatched' || r.bucket === 'mismatched');
+    if (state.category) rows = rows.filter((r) => r.line_mismatch_category === state.category || r.mismatch_category === state.category);
     if (state.plan !== 'all') {
       const p = state.plan.toLowerCase();
-      recs = recs.filter((r) => (r.plan || '').toLowerCase().includes(p));
+      rows = rows.filter((r) => (r.plan || '').toLowerCase().includes(p));
     }
     if (state.search) {
       const q = state.search.toLowerCase();
-      recs = recs.filter((r) => `${r.display_request_id || ''} ${r.patient_name || ''} ${r.patient_id || ''} ${r.item_description || ''} ${r.plan || ''}`.toLowerCase().includes(q));
+      rows = rows.filter((r) => {
+        const item = r.line_item || {};
+        return `${r.display_request_id || ''} ${r.patient_name || ''} ${r.patient_id || ''} ${item.name || ''} ${r.plan || ''} ${item.claim_item_id || ''}`.toLowerCase().includes(q);
+      });
     }
-    return recs.slice().sort((a, b) => new Date(b.received_at || 0).getTime() - new Date(a.received_at || 0).getTime());
+    return rows.slice().sort((a, b) => new Date(b.received_at || 0).getTime() - new Date(a.received_at || 0).getTime());
   }, [records, state.mode, state.onlyMismatch, state.category, state.plan, state.search]);
 
   if (!all.length) {
@@ -273,8 +343,8 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
         </div>
         <div className="acc-empty">
           <div className="ph">✓</div>
-          <h4>{state.onlyMismatch ? 'No mismatches to investigate' : 'No PAs match these filters'}</h4>
-          <p>{state.onlyMismatch ? 'Every scored PA in this view agreed with AMAN. Toggle off "Only mismatches" to see all decisions, or widen the date range.' : 'Try clearing the search or plan filter.'}</p>
+          <h4>{state.onlyMismatch ? 'No line-item mismatches to investigate' : 'No line items match these filters'}</h4>
+          <p>{state.onlyMismatch ? 'Every visible line item in this view agreed with AMAN. Toggle off "Only mismatches" to see all line items, or widen the date range.' : 'Try clearing the search or plan filter.'}</p>
         </div>
       </div>
     );
@@ -293,16 +363,26 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
       {slice.map((r) => {
         const agentLat = r.agent_decision ? fmtLat(r.agent_latency_s) : '—';
         const amanLat = r.aman_review_min != null ? fmtMins(r.aman_review_min) : 'pending';
+        const item = r.line_item || {};
+        const category = r.line_mismatch_category;
         return (
-          <div key={r.request_id} className="acc-trow" onClick={() => onRowOpen(r)}>
-            <div className="ref">{refTail(r.display_request_id)}<small>{r.plan || '—'}</small></div>
+          <div key={r.line_key} className="acc-trow" onClick={() => onRowOpen(r)}>
+            <div className="ref">{refTail(r.display_request_id)}<small>{r.plan || '—'} · line {r.line_index}/{r.line_count}</small></div>
             <div className="pt">{r.patient_name || <span className="muted">Unnamed</span>}<small>{r.patient_id}</small></div>
-            <div className="item" title={r.item_description || ''}>{r.item_description || '—'}</div>
-            <div className="vs">{decPill(r.agent_decision)}<span className="arrow">→</span>{decPill(r.aman_decision)}</div>
+            <div className="item" title={item.name || ''}>
+              {item.name || '—'}
+              {item.claim_item_id ? <small>claim #{item.claim_item_id}</small> : null}
+            </div>
+            <div className="vs">{decPill(item.agent_decision)}<span className="arrow">→</span>{decPill(
+              item.aman_status === 'approved' ? 'APPROVE' :
+              item.aman_status === 'rejected' ? 'DENY' :
+              item.aman_status === 'queried' ? 'ESCALATE' :
+              null
+            )}</div>
             <div>
-              {r.mismatch_category
-                ? catBadge(r.mismatch_category)
-                : <span className="bucket-badge">{BUCKET_META[r.bucket]?.label || r.bucket}</span>}
+              {category
+                ? catBadge(category)
+                : <span className="bucket-badge">{BUCKET_META[r.line_bucket]?.label || r.line_bucket}</span>}
             </div>
             <div className="lat"><b>agent</b> {agentLat}<br /><b>AMAN</b> {amanLat}</div>
             <div className="when">{ago(r.received_at)}</div>
@@ -310,7 +390,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
         );
       })}
       <div className="acc-tfoot">
-        <span>{all.length} {state.onlyMismatch ? 'mismatch' : 'PA'}{all.length === 1 ? '' : 'es'}{state.category ? ` · ${MISMATCH_META[state.category]?.label || state.category}` : ''}</span>
+        <span>{all.length} line item{all.length === 1 ? '' : 's'}{state.onlyMismatch ? ' with mismatch' : ''}{state.category ? ` · ${MISMATCH_META[state.category]?.label || state.category}` : ''}</span>
         {pages > 1 ? (
           <div className="pager">
             {Array.from({ length: pages }, (_, i) => (
@@ -398,7 +478,7 @@ function DateRangeBar({ from, to, onChange, presetLabel }) {
 export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDownloadReport, isAdmin, period, dateFrom, dateTo, onDateChange }) {
   const [state, setState] = useState({
     mode: 'all',
-    onlyMismatch: true,
+    onlyMismatch: false,
     category: null,
     plan: 'all',
     search: '',
@@ -436,7 +516,6 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
           {isAdmin ? (
             <button
               className="btn primary"
-              data-admin-only=""
               onClick={() => onDownloadReport(state.mode)}
               data-tip="Open a print-friendly Weekly QA Report for the current mode and date range. Use the browser's Save as PDF."
               data-tip-pos="below"
@@ -517,7 +596,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
           <button
             className={`statbtn toggle-mm ${state.onlyMismatch ? 'on' : ''}`}
             onClick={() => setState((s) => ({ ...s, onlyMismatch: !s.onlyMismatch, category: s.onlyMismatch ? null : s.category, page: 1 }))}
-            data-tip="When on, only PAs where the agent and AMAN disagreed are shown."
+            data-tip="When on, shows line items from PAs where the agent and AMAN disagreed."
             data-tip-pos="below"
             data-tip-align="right"
           >
@@ -664,8 +743,63 @@ function AmanCountsSummary({ counts }) {
   );
 }
 
+function ConsumptionSummary({ consumption }) {
+  if (!consumption) return null;
+  const limits = [
+    ...((Array.isArray(consumption.enrollee_limits) && consumption.enrollee_limits) || []),
+    ...((Array.isArray(consumption.policy_limits) && consumption.policy_limits) || []),
+  ];
+  if (!limits.length) {
+    return (
+      <div className="vs-banner pending" style={{ marginTop: 12 }}>
+        <span className="sp">◷</span>
+        <div><b>No consumption limits in latest AMAN payload.</b> The agent may have used fallback plan rules for this PA.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg)' }}>
+      <div style={{ padding: '10px 14px', background: 'var(--bg-2)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
+        Cycle {consumption.cycle?.label || '—'}
+      </div>
+      {limits.slice(0, 8).map((limit, i) => (
+        <div key={`${limit.limit_definition_id || 'limit'}-${i}`} style={{ display: 'grid', gridTemplateColumns: '1fr 92px 92px 92px', gap: 10, padding: '10px 14px', borderTop: i ? '1px solid var(--line)' : 'none', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink)' }}>
+              Rule {limit.limit_definition_id || '—'} · {limit.metric_name || limit.metric_type || 'Limit'}
+            </div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+              {limit.target_type || 'scope'} · {limit.period || 'period'}
+            </div>
+          </div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, textAlign: 'right' }}>cap<br /><b>{fmtNGNfull(limit.limit_value)}</b></div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, textAlign: 'right' }}>used<br /><b>{fmtNGNfull(limit.consumed_value)}</b></div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, textAlign: 'right' }}>left<br /><b>{fmtNGNfull(limit.remaining_value)}</b></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
   if (!r) return null;
+  const focusedItems = r.line_item ? [r.line_item] : (r.items_compare || []);
+  const line = r.line_item || null;
+  const lineAmanDecision = line ? (
+    line.aman_status === 'approved' ? 'APPROVE' :
+    line.aman_status === 'rejected' ? 'DENY' :
+    line.aman_status === 'queried' ? 'ESCALATE' :
+    null
+  ) : null;
+  const compareRecord = line ? {
+    ...r,
+    bucket: r.line_bucket,
+    mismatch_category: r.line_mismatch_category,
+    agent_decision: line.agent_decision,
+    aman_decision: lineAmanDecision,
+    agent_amount: line.agent_decision === 'APPROVE' ? (line.agent_recommended_cost || line.agent_requested_cost) : 0,
+    aman_amount: line.aman_status === 'approved' ? line.aman_approved_cost : 0,
+  } : r;
   const agentLat = r.agent_decision ? fmtLat(r.agent_latency_s) : '—';
   const amanLat = r.aman_review_min != null ? fmtMins(r.aman_review_min) : 'pending';
   const totalLat = r.total_end_to_end_min != null ? fmtMins(r.total_end_to_end_min) : '—';
@@ -687,24 +821,24 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
       </div>
 
       <div>
-        <div className="sec-h">Decision compare <span className="n">agent ↔ AMAN</span></div>
+        <div className="sec-h">{line ? 'Selected line decision' : 'Decision compare'} <span className="n">agent ↔ AMAN</span></div>
         <div className="vs-grid">
           <VsCol
             who="Agent"
-            dec={r.agent_decision}
-            amt={r.agent_decision === 'APPROVE' ? r.agent_amount : null}
+            dec={line ? line.agent_decision : r.agent_decision}
+            amt={line ? (line.agent_decision === 'APPROVE' ? (line.agent_recommended_cost || line.agent_requested_cost) : null) : (r.agent_decision === 'APPROVE' ? r.agent_amount : null)}
             meta={agentMeta}
-            reason={r.agent_reason || ''}
+            reason={(line && line.agent_reason) || r.agent_reason || ''}
           />
           <VsCol
             who="AMAN"
-            dec={r.aman_decision}
-            amt={r.aman_decision === 'APPROVE' ? r.aman_amount : null}
+            dec={line ? lineAmanDecision : r.aman_decision}
+            amt={line ? (line.aman_status === 'approved' ? line.aman_approved_cost : null) : (r.aman_decision === 'APPROVE' ? r.aman_amount : null)}
             meta={amanMeta}
             reason={r.aman_note || ''}
           />
         </div>
-        <BannerFor r={r} tolerance={tolerance} />
+        <BannerFor r={compareRecord} tolerance={tolerance} />
         <AmanCountsSummary counts={r.aman_item_counts} />
       </div>
 
@@ -718,8 +852,13 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
       </div>
 
       <div>
-        <div className="sec-h">Line-item comparison <span className="n">{(r.items_compare || []).length} items</span></div>
-        <ItemCompareTable items={r.items_compare || []} />
+        <div className="sec-h">{line ? 'Focused line item' : 'Line-item comparison'} <span className="n">{line ? `line ${r.line_index || 1} of ${r.line_count || (r.items_compare || []).length || 1}` : `${(r.items_compare || []).length} items`}</span></div>
+        <ItemCompareTable items={focusedItems} />
+      </div>
+
+      <div>
+        <div className="sec-h">Consumption limits</div>
+        <ConsumptionSummary consumption={r.consumption} />
       </div>
 
       <div>
@@ -729,7 +868,7 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
           <div className="cell"><div className="k">Plan</div><div className="v mono">{r.plan || '—'}</div></div>
           <div className="cell"><div className="k">Diagnosis</div><div className="v">{r.diagnosis || '—'}</div></div>
           <div className="cell"><div className="k">Facility</div><div className="v">{r.facility || '—'}</div></div>
-          <div className="cell"><div className="k">Item</div><div className="v">{r.item_description || '—'}</div></div>
+          <div className="cell"><div className="k">Item</div><div className="v">{line?.name || r.item_description || '—'}</div></div>
           <div className="cell"><div className="k">Requested</div><div className="v mono">{r.requested_amount != null ? fmtNGNfull(r.requested_amount) : '—'}</div></div>
           <div className="cell"><div className="k">Received</div><div className="v mono">{r.received_at ? new Date(r.received_at).toLocaleString() : '—'}</div></div>
           <div className="cell"><div className="k">Callback mode</div><div className="v mono">{r.callback_mode || '—'}</div></div>

@@ -4690,7 +4690,7 @@ function AppInner() {
                 onRefresh={() => loadAccuracy()}
                 onOpenRow={(r) => { setAccuracySelected(r); setDrawerOpen(true); }}
                 onDownloadReport={(mode) => downloadWeeklyQaReport(mode)}
-                isAdmin={role === 'admin' && !isDrillIn}
+                isAdmin={role === 'admin'}
                 period={accuracy?.window?.label}
                 dateFrom={accuracyDateFrom}
                 dateTo={accuracyDateTo}
