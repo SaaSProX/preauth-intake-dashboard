@@ -325,6 +325,11 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
   const all = useMemo(() => {
     let recs = recordsForMode(records, state.mode);
     let rows = rowsFromRecords(recs);
+    if (state.outcome === 'matched') rows = rows.filter((r) => r.line_bucket === 'matched');
+    if (state.outcome === 'mismatched') rows = rows.filter((r) => r.line_bucket === 'mismatched' || r.bucket === 'mismatched');
+    if (state.outcome === 'approved') rows = rows.filter((r) => (r.line_item || {}).aman_status === 'approved');
+    if (state.outcome === 'rejected') rows = rows.filter((r) => (r.line_item || {}).aman_status === 'rejected');
+    if (state.outcome === 'pending') rows = rows.filter((r) => !(r.line_item || {}).aman_status || r.line_bucket === 'pending_aman');
     if (state.onlyMismatch) rows = rows.filter((r) => r.line_bucket === 'mismatched' || r.bucket === 'mismatched');
     if (state.category) rows = rows.filter((r) => r.line_mismatch_category === state.category || r.mismatch_category === state.category);
     if (state.plan !== 'all') {
@@ -339,7 +344,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
       });
     }
     return rows.slice().sort((a, b) => new Date(b.received_at || 0).getTime() - new Date(a.received_at || 0).getTime());
-  }, [records, state.mode, state.onlyMismatch, state.category, state.plan, state.search]);
+  }, [records, state.mode, state.outcome, state.onlyMismatch, state.category, state.plan, state.search]);
 
   if (!all.length) {
     return (
@@ -351,7 +356,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
         <div className="acc-empty">
           <div className="ph">✓</div>
           <h4>{state.onlyMismatch ? 'No line-item mismatches to investigate' : 'No line items match these filters'}</h4>
-          <p>{state.onlyMismatch ? 'Every visible line item in this view agreed with AMAN. Toggle off "Only mismatches" to see all line items, or widen the date range.' : 'Try clearing the search or plan filter.'}</p>
+          <p>{state.onlyMismatch || state.outcome === 'mismatched' ? 'Every visible line item in this view agreed with AMAN. Switch back to All lines, or widen the date range.' : 'Try clearing the search or filter.'}</p>
         </div>
       </div>
     );
@@ -397,7 +402,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
         );
       })}
       <div className="acc-tfoot">
-        <span>{all.length} line item{all.length === 1 ? '' : 's'}{state.onlyMismatch ? ' with mismatch' : ''}{state.category ? ` · ${MISMATCH_META[state.category]?.label || state.category}` : ''}</span>
+        <span>{all.length} line item{all.length === 1 ? '' : 's'}{state.outcome !== 'all' ? ` · ${state.outcome}` : ''}{state.onlyMismatch ? ' with mismatch' : ''}{state.category ? ` · ${MISMATCH_META[state.category]?.label || state.category}` : ''}</span>
         {pages > 1 ? (
           <div className="pager">
             {Array.from({ length: pages }, (_, i) => (
@@ -497,6 +502,7 @@ function DateRangeBar({ from, to, onChange, presetLabel }) {
 export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDownloadReport, isAdmin, period, dateFrom, dateTo, onDateChange }) {
   const [state, setState] = useState({
     mode: 'all',
+    outcome: 'all',
     onlyMismatch: false,
     category: null,
     plan: 'all',
@@ -555,7 +561,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
 
       <div className="section-gap" style={{ marginTop: 18 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
-          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Review filters</h2>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Filter</h2>
           <span className="muted mono" style={{ fontSize: 12 }}>{A.total || 0} PA{A.total === 1 ? '' : 's'} · {A.scored || 0} scored</span>
         </div>
         <div className="toolbar" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
@@ -578,6 +584,29 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
               presetLabel={loading ? 'Loading...' : null}
             />
           ) : null}
+          <span className="acc-modeswitch acc-outcome-filter" data-tip="Filter the line-item review table by AMAN outcome or mismatch status." data-tip-pos="below">
+            {[
+              ['all', 'All lines'],
+              ['approved', 'Approved'],
+              ['rejected', 'Rejected'],
+              ['mismatched', 'Mismatch'],
+              ['pending', 'Pending'],
+            ].map(([key, name]) => (
+              <button
+                key={key}
+                className={state.outcome === key ? 'on' : ''}
+                onClick={() => setState((s) => ({
+                  ...s,
+                  outcome: key,
+                  onlyMismatch: key === 'mismatched',
+                  category: null,
+                  page: 1,
+                }))}
+              >
+                {name}
+              </button>
+            ))}
+          </span>
         </div>
       </div>
 
@@ -597,7 +626,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
           activeCategory={state.category}
           onPickCategory={(cat) => setState((s) => {
             const nextCategory = s.category === cat ? null : cat;
-            return { ...s, category: nextCategory, onlyMismatch: !!nextCategory, page: 1 };
+            return { ...s, category: nextCategory, outcome: nextCategory ? 'mismatched' : s.outcome, onlyMismatch: !!nextCategory, page: 1 };
           })}
         />
       </div>
