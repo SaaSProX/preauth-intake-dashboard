@@ -553,28 +553,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
         </div>
       ) : null}
 
-      <div className="acc-sec" style={{ marginTop: 20 }}>
-        <HeroStrip A={A} tolerance={tolerance} />
-      </div>
-
-      <div className="acc-sec">
-        <div className="acc-sec-h">Value &amp; time <span className="hint">— correct-decision value, and time the agent saves</span></div>
-        <div className="grid-2"><ValueCard A={A} /><LatencyCard A={A} /></div>
-      </div>
-
-      <div className="acc-sec">
-        <div className="acc-sec-h">Mismatch breakdown <span className="hint">— is the disagreement systematic?</span></div>
-        <MismatchCard
-          A={A}
-          activeCategory={state.category}
-          onPickCategory={(cat) => setState((s) => {
-            const nextCategory = s.category === cat ? null : cat;
-            return { ...s, category: nextCategory, onlyMismatch: !!nextCategory, page: 1 };
-          })}
-        />
-      </div>
-
-      <div className="section-gap" style={{ marginTop: 30 }}>
+      <div className="section-gap" style={{ marginTop: 18 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
           <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Review filters</h2>
           <span className="muted mono" style={{ fontSize: 12 }}>{A.total || 0} PA{A.total === 1 ? '' : 's'} · {A.scored || 0} scored</span>
@@ -599,6 +578,34 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
               presetLabel={loading ? 'Loading...' : null}
             />
           ) : null}
+        </div>
+      </div>
+
+      <div className="acc-sec" style={{ marginTop: 20 }}>
+        <HeroStrip A={A} tolerance={tolerance} />
+      </div>
+
+      <div className="acc-sec">
+        <div className="acc-sec-h">Value &amp; time <span className="hint">— correct-decision value, and time the agent saves</span></div>
+        <div className="grid-2"><ValueCard A={A} /><LatencyCard A={A} /></div>
+      </div>
+
+      <div className="acc-sec">
+        <div className="acc-sec-h">Mismatch breakdown <span className="hint">— is the disagreement systematic?</span></div>
+        <MismatchCard
+          A={A}
+          activeCategory={state.category}
+          onPickCategory={(cat) => setState((s) => {
+            const nextCategory = s.category === cat ? null : cat;
+            return { ...s, category: nextCategory, onlyMismatch: !!nextCategory, page: 1 };
+          })}
+        />
+      </div>
+
+      <div className="section-gap" style={{ marginTop: 30 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Line-item review</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>Click any row to compare decisions</span>
         </div>
         {loading && !data ? (
           <div className="acc-table">
