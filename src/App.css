@@ -1418,9 +1418,11 @@ body[data-layout="split"] .askbar-wrap { left: 260px; }
 .acc-trow:hover { background: var(--bg-2); }
 .acc-trow .ref { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
 .acc-trow .ref small { display: block; color: var(--ink-3); font-size: 10.5px; margin-top: 2px; }
-.acc-trow .pt { font-size: 13px; }
+.acc-trow .pt { font-size: 13px; min-width: 0; }
 .acc-trow .pt small { display: block; color: var(--ink-3); font-family: var(--mono); font-size: 11px; margin-top: 1px; }
-.acc-trow .item { font-size: 13px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-trow .item { min-width: 0; color: var(--ink-2); overflow: hidden; }
+.acc-trow .item .item-name { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-trow .item small { display: block; color: var(--ink-3); font-family: var(--mono); font-size: 10.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc-trow .vs { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .acc-trow .vs .arrow { color: var(--ink-4); font-family: var(--mono); }
 .acc-trow .lat { font-family: var(--mono); font-size: 11px; color: var(--ink-3); line-height: 1.5; }

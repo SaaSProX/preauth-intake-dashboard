@@ -4245,7 +4245,7 @@ function AppInner() {
     if (activeNav === 'onboarding' && !orgs) loadOrgs();
     if (activeNav === 'patients' && !patients) loadPatients();
     if (activeNav === 'support') refreshSupport();
-    if (SHOW_ACCURACY_DASHBOARD && activeNav === 'accuracy' && !accuracy) loadAccuracy();
+    if (SHOW_ACCURACY_DASHBOARD && activeNav === 'accuracy') loadAccuracy();
     // eslint-disable-next-line
   }, [session?.token, activeNav, viewOrgId]);
 

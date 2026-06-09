@@ -83,6 +83,13 @@ function catBadge(cat) {
   return <span className={`cat-badge ${m.cls}`}>{m.label}</span>;
 }
 
+const IconSearch = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--ink-3)' }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+);
+const IconCal = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></svg>
+);
+
 function speedFactor(latency) {
   if (!latency?.aman_min || !latency?.agent_s) return null;
   return Math.round((latency.aman_min * 60) / latency.agent_s);
@@ -338,7 +345,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
     return (
       <div className="acc-table">
         <div className="acc-thead">
-          <span>Reference</span><span>Patient</span><span>Item</span>
+          <span>Reference</span><span>Patient</span><span>Service / procedure</span>
           <span>Agent → AMAN</span><span>Category</span><span>Latency</span><span className="r">Received</span>
         </div>
         <div className="acc-empty">
@@ -357,7 +364,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
   return (
     <div className="acc-table">
       <div className="acc-thead">
-        <span>Reference</span><span>Patient</span><span>Item</span>
+        <span>Reference</span><span>Patient</span><span>Service / procedure</span>
         <span>Agent → AMAN</span><span>Category</span><span>Latency</span><span className="r">Received</span>
       </div>
       {slice.map((r) => {
@@ -370,7 +377,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
             <div className="ref">{refTail(r.display_request_id)}<small>{r.plan || '—'} · line {r.line_index}/{r.line_count}</small></div>
             <div className="pt">{r.patient_name || <span className="muted">Unnamed</span>}<small>{r.patient_id}</small></div>
             <div className="item" title={item.name || ''}>
-              {item.name || '—'}
+              <span className="item-name">{item.name || '—'}</span>
               {item.claim_item_id ? <small>claim #{item.claim_item_id}</small> : null}
             </div>
             <div className="vs">{decPill(item.agent_decision)}<span className="arrow">→</span>{decPill(
@@ -414,60 +421,72 @@ function daysAgoIso(n) { const d = new Date(); d.setDate(d.getDate() - n); retur
 function startOfMonthIso() { const d = new Date(); d.setDate(1); return isoDay(d); }
 
 function DateRangeBar({ from, to, onChange, presetLabel }) {
+  const [open, setOpen] = useState(false);
   const presets = [
-    { key: 'today', label: 'Today', from: todayIso(), to: todayIso(), tip: 'Just today.' },
-    { key: '7d',    label: 'Last 7 days', from: daysAgoIso(6), to: todayIso(), tip: 'Rolling 7-day window. Default.' },
-    { key: '30d',   label: 'Last 30 days', from: daysAgoIso(29), to: todayIso(), tip: 'Rolling 30-day window.' },
-    { key: 'mtd',   label: 'This month', from: startOfMonthIso(), to: todayIso(), tip: 'From the 1st of this month.' },
+    { key: 'today', label: 'Today', from: todayIso(), to: todayIso() },
+    { key: '7d',    label: 'Last 7 days', from: daysAgoIso(6), to: todayIso() },
+    { key: '30d',   label: 'Last 30 days', from: daysAgoIso(29), to: todayIso() },
+    { key: 'mtd',   label: 'This month', from: startOfMonthIso(), to: todayIso() },
+    { key: 'all',   label: 'All time', from: '', to: '' },
   ];
   const active = (() => {
     if (!from && !to) return '7d';
     return presets.find((p) => p.from === from && p.to === to)?.key || 'custom';
   })();
+  const label = presets.find((p) => p.key === active)?.label || `${from || 'start'} → ${to || 'today'}`;
+  const applyRange = (nextFrom, nextTo, close = true) => {
+    onChange(nextFrom, nextTo);
+    if (close) setOpen(false);
+  };
+
   return (
-    <div className="acc-toolbar" style={{ marginTop: 18, marginBottom: 4 }}>
-      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>Window</span>
-      {presets.map((p) => (
+    <div className="date-range">
+      <button
+        type="button"
+        className={`date-range-btn ${open ? 'on' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        data-tip="Filter by received date."
+        data-tip-pos="below"
+      >
+        <IconCal />
+        <span>{label}</span>
+        {presetLabel ? <i className="mini-spinner" aria-label="Loading filtered data" /> : null}
+        <span className="chev" aria-hidden="true">⌄</span>
+      </button>
+      {open ? (
+        <div className="date-popover">
+          {presetLabel ? <div className="date-loading"><i className="mini-spinner" /> Updating range...</div> : null}
+          <div className="range-presets">
+            {presets.map((preset) => (
+              <button key={preset.key} type="button" onClick={() => applyRange(preset.from, preset.to)}>
+                <span>{preset.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="custom-range">
+            <div className="custom-range-head">
+              <span>✓</span>
+              <b>Custom range</b>
+            </div>
+            <div className="custom-range-inputs">
+              <input type="date" value={from || ''} onChange={(e) => applyRange(e.target.value || '', to || '', false)} />
+              <input type="date" value={to || ''} onChange={(e) => applyRange(from || '', e.target.value || '', false)} />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {(from || to) && !open ? (
         <button
-          key={p.key}
-          className={`statbtn ${active === p.key ? 'on' : ''}`}
-          onClick={() => onChange(p.from, p.to)}
-          data-tip={p.tip}
-          data-tip-pos="below"
-        >{p.label}</button>
-      ))}
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 6 }}>
-        <input
-          type="date"
-          value={from || ''}
-          onChange={(e) => onChange(e.target.value || '', to || '')}
-          className="dateinput"
-          style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '6px 8px', border: '1px solid var(--line-2)', borderRadius: 8, background: 'var(--bg)' }}
-          data-tip="Start date (inclusive). Leave blank to use the active preset."
-          data-tip-pos="below"
-        />
-        <span style={{ color: 'var(--ink-4)' }}>→</span>
-        <input
-          type="date"
-          value={to || ''}
-          onChange={(e) => onChange(from || '', e.target.value || '')}
-          className="dateinput"
-          style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '6px 8px', border: '1px solid var(--line-2)', borderRadius: 8, background: 'var(--bg)' }}
-          data-tip="End date (inclusive)."
-          data-tip-pos="below"
-          data-tip-align="right"
-        />
-      </span>
-      {(from || to) ? (
-        <button
+          type="button"
           className="statbtn"
-          onClick={() => onChange('', '')}
-          data-tip="Clears the window — falls back to last 7 days (the backend default)."
+          onClick={() => applyRange('', '')}
+          data-tip="Clears the window and falls back to the backend default."
           data-tip-pos="below"
           data-tip-align="right"
+          style={{ marginLeft: 8 }}
         >Reset</button>
       ) : null}
-      {presetLabel ? <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>{presetLabel}</span> : null}
     </div>
   );
 }
@@ -534,15 +553,6 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
         </div>
       ) : null}
 
-      {onDateChange ? (
-        <DateRangeBar
-          from={dateFrom}
-          to={dateTo}
-          onChange={onDateChange}
-          presetLabel={loading ? 'Loading…' : null}
-        />
-      ) : null}
-
       <div className="acc-sec" style={{ marginTop: 20 }}>
         <HeroStrip A={A} tolerance={tolerance} />
       </div>
@@ -557,51 +567,38 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
         <MismatchCard
           A={A}
           activeCategory={state.category}
-          onPickCategory={(cat) => setState((s) => ({ ...s, category: s.category === cat ? null : cat, onlyMismatch: true, page: 1 }))}
+          onPickCategory={(cat) => setState((s) => {
+            const nextCategory = s.category === cat ? null : cat;
+            return { ...s, category: nextCategory, onlyMismatch: !!nextCategory, page: 1 };
+          })}
         />
       </div>
 
-      <div className="acc-sec">
-        <div className="acc-sec-h">Drilldown <span className="hint">— click any row to see the agent decision and AMAN's final, side by side</span></div>
-        <div className="acc-toolbar">
-          <div className="search" style={{ maxWidth: 340 }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--ink-3)' }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+      <div className="section-gap" style={{ marginTop: 30 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+          <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Review filters</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>{A.total || 0} PA{A.total === 1 ? '' : 's'} · {A.scored || 0} scored</span>
+        </div>
+        <div className="toolbar" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+          <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }}>
+            <IconSearch />
             <input
               value={state.search}
               onChange={(e) => setState((s) => ({ ...s, search: e.target.value, page: 1 }))}
-              placeholder="Search patient, request ref, item…"
-              data-tip="Filters the current mode + filter set. Matches reference, patient name/ID, plan, and item description."
+              placeholder="Search reference, patient, plan, service..."
+              data-tip="Filters the current mode + filter set. Matches reference, patient name/ID, plan, service, and claim ID."
               data-tip-pos="below"
               data-tip-align="left"
             />
           </div>
-          <span className="daterange">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></svg>
-            {label}
-          </span>
-          <select
-            className="selectish"
-            value={state.plan}
-            onChange={(e) => setState((s) => ({ ...s, plan: e.target.value, page: 1 }))}
-            style={{ appearance: 'none', cursor: 'pointer' }}
-            data-tip="Filters the table to a specific plan tier."
-            data-tip-pos="below"
-          >
-            <option value="all">All plans</option>
-            <option value="bronze">Bronze</option>
-            <option value="silver">Silver</option>
-            <option value="gold">Gold</option>
-            <option value="platinum">Platinum</option>
-          </select>
-          <button
-            className={`statbtn toggle-mm ${state.onlyMismatch ? 'on' : ''}`}
-            onClick={() => setState((s) => ({ ...s, onlyMismatch: !s.onlyMismatch, category: s.onlyMismatch ? null : s.category, page: 1 }))}
-            data-tip="When on, shows line items from PAs where the agent and AMAN disagreed."
-            data-tip-pos="below"
-            data-tip-align="right"
-          >
-            Only mismatches
-          </button>
+          {onDateChange ? (
+            <DateRangeBar
+              from={dateFrom}
+              to={dateTo}
+              onChange={onDateChange}
+              presetLabel={loading ? 'Loading...' : null}
+            />
+          ) : null}
         </div>
         {loading && !data ? (
           <div className="acc-table">
