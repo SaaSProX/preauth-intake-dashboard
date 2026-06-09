@@ -4224,14 +4224,6 @@ function AppInner() {
   }, [session?.token, session?.role, session?.org_name, orgs]);
 
   useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, debouncedQuery]);
-  useEffect(() => {
-    if (!pendingOpenCheckin || loading) return;
-    const match = requests.find((r) => (r.display_request_id || r.request_id) === pendingOpenCheckin || r.request_id === pendingOpenCheckin);
-    if (!match) return;
-    setSelectedId(match.request_id);
-    setDrawerOpen(true);
-    setPendingOpenCheckin('');
-  }, [pendingOpenCheckin, loading, requests]);
   // Debounce the search box: wait 300ms after last keystroke before fetching.
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -4338,6 +4330,15 @@ function AppInner() {
       return okS && (!q || blob.includes(q));
     });
   }, [requests, query, statusFilter]);
+
+  useEffect(() => {
+    if (!pendingOpenCheckin || loading) return;
+    const match = requests.find((r) => (r.display_request_id || r.request_id) === pendingOpenCheckin || r.request_id === pendingOpenCheckin);
+    if (!match) return;
+    setSelectedId(match.request_id);
+    setDrawerOpen(true);
+    setPendingOpenCheckin('');
+  }, [pendingOpenCheckin, loading, requests]);
 
   // Resolve `selected` from the current page first; fall back to the loaded
   // patient history so clicking a sibling whose row sits on another page still
