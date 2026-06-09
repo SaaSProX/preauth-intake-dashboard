@@ -69,6 +69,9 @@ function ago(iso) {
   if (mins < 60 * 24) return Math.round(mins / 60) + 'h ago';
   return Math.round(mins / (60 * 24)) + 'd ago';
 }
+function submittedAt(row) {
+  return row?.submitted_at || row?.received_at;
+}
 
 const DEC_TO_STATUS = { APPROVE: 'approve', DENY: 'deny', ESCALATE: 'escalate' };
 function decPill(dec) {
@@ -175,7 +178,7 @@ function LatencyCard({ A }) {
   const rows = [
     { lab: 'Agent decision', num: fmtLat(L.agent_s), c: 'var(--ok)', mins: agentMin, p: `p50 ${fmtLat(L.agent_p50)} · p95 ${fmtLat(L.agent_p95)}` },
     { lab: 'AMAN review',    num: fmtMins(L.aman_min), c: 'var(--warn)', mins: L.aman_min || 0, p: `p50 ${fmtMins(L.aman_p50)} · p95 ${fmtMins(L.aman_p95)}` },
-    { lab: 'Total end-to-end', num: fmtMins(totalMin), c: 'var(--slate)', mins: totalMin, p: 'received → AMAN final' },
+    { lab: 'Total end-to-end', num: fmtMins(totalMin), c: 'var(--slate)', mins: totalMin, p: 'submitted → AMAN final' },
   ];
   return (
     <div className="metric">
@@ -343,7 +346,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
         return `${r.display_request_id || ''} ${r.patient_name || ''} ${r.patient_id || ''} ${item.name || ''} ${r.plan || ''} ${item.claim_item_id || ''}`.toLowerCase().includes(q);
       });
     }
-    return rows.slice().sort((a, b) => new Date(b.received_at || 0).getTime() - new Date(a.received_at || 0).getTime());
+    return rows.slice().sort((a, b) => new Date(submittedAt(b) || 0).getTime() - new Date(submittedAt(a) || 0).getTime());
   }, [records, state.mode, state.outcome, state.onlyMismatch, state.category, state.plan, state.search]);
 
   if (!all.length) {
@@ -351,7 +354,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
       <div className="acc-table">
         <div className="acc-thead">
           <span>Reference</span><span>Patient</span><span>Service / procedure</span>
-          <span>Agent → AMAN</span><span>Category</span><span>Latency</span><span className="r">Received</span>
+          <span>Agent → AMAN</span><span>Category</span><span>Latency</span><span className="r">Submitted</span>
         </div>
         <div className="acc-empty">
           <div className="ph">✓</div>
@@ -370,7 +373,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
     <div className="acc-table">
       <div className="acc-thead">
         <span>Reference</span><span>Patient</span><span>Service / procedure</span>
-        <span>Agent → AMAN</span><span>Category</span><span>Latency</span><span className="r">Received</span>
+        <span>Agent → AMAN</span><span>Category</span><span>Latency</span><span className="r">Submitted</span>
       </div>
       {slice.map((r) => {
         const agentLat = r.agent_decision ? fmtLat(r.agent_latency_s) : '—';
@@ -397,7 +400,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
                 : <span className="bucket-badge">{BUCKET_META[r.line_bucket]?.label || r.line_bucket}</span>}
             </div>
             <div className="lat"><b>agent</b> {agentLat}<br /><b>AMAN</b> {amanLat}</div>
-            <div className="when">{ago(r.received_at)}</div>
+            <div className="when">{ago(submittedAt(r))}</div>
           </div>
         );
       })}
@@ -451,7 +454,7 @@ function DateRangeBar({ from, to, onChange, presetLabel }) {
         className={`date-range-btn ${open ? 'on' : ''}`}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        data-tip="Filter by received date."
+        data-tip="Filter by PA submitted date."
         data-tip-pos="below"
       >
         <IconCal />
@@ -967,7 +970,7 @@ export function WeeklyQaReportSheet({ data, mode = 'all', session, orgName }) {
   const cats = (A.categories || []).filter((c) => c.v > 0).slice().sort((a, b) => b.v - a.v);
   const top10 = (data.records || [])
     .filter((r) => r.bucket === 'mismatched')
-    .sort((a, b) => new Date(b.received_at || 0).getTime() - new Date(a.received_at || 0).getTime())
+    .sort((a, b) => new Date(submittedAt(b) || 0).getTime() - new Date(submittedAt(a) || 0).getTime())
     .slice(0, 10);
   const cadence = detectCadence(data.window);
   const v = A.value || {};
@@ -1074,7 +1077,7 @@ export function WeeklyQaReportSheet({ data, mode = 'all', session, orgName }) {
                 {[
                   { lab: 'Agent decision', num: fmtLat(L.agent_s), c: 'var(--ok)', mins: agentMin, p: `p50 ${fmtLat(L.agent_p50)} · p95 ${fmtLat(L.agent_p95)}` },
                   { lab: 'AMAN review',    num: fmtMins(L.aman_min), c: 'var(--warn)', mins: L.aman_min || 0, p: `p50 ${fmtMins(L.aman_p50)} · p95 ${fmtMins(L.aman_p95)}` },
-                  { lab: 'Total end-to-end', num: fmtMins(totalMin), c: 'var(--slate)', mins: totalMin, p: 'received → AMAN final' },
+                  { lab: 'Total end-to-end', num: fmtMins(totalMin), c: 'var(--slate)', mins: totalMin, p: 'submitted → AMAN final' },
                 ].map((r) => (
                   <div key={r.lab} className="lat-row">
                     <div className="lr-top">
