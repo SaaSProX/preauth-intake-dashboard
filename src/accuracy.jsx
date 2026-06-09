@@ -689,6 +689,8 @@ function ItemCompareTable({ items }) {
       </div>
       {items.map((it, i) => {
         const reason = it.agent_reason;
+        const amanComment = it.aman_comment;
+        const amanMeta = [it.aman_auth_code ? `Auth ${it.aman_auth_code}` : '', it.aman_decided_at ? `Decided ${it.aman_decided_at}` : ''].filter(Boolean).join(' · ');
         return (
           <div key={it.claim_item_id || i} style={{ borderTop: i ? '1px solid var(--line)' : 'none' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 130px 130px 110px 110px', gap: 12, padding: '10px 14px', alignItems: 'center' }}>
@@ -711,6 +713,12 @@ function ItemCompareTable({ items }) {
               <div style={{ padding: '0 14px 12px 14px', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--ink-3)', marginRight: 6 }}>Why the agent said this:</span>
                 {reason}
+              </div>
+            ) : null}
+            {amanComment || amanMeta ? (
+              <div style={{ padding: reason ? '0 14px 12px 14px' : '0 14px 12px 14px', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--ink-3)', marginRight: 6 }}>AMAN comment:</span>
+                {amanComment || 'No comment'}{amanMeta ? <span style={{ color: 'var(--ink-3)' }}> · {amanMeta}</span> : null}
               </div>
             ) : null}
           </div>
@@ -778,7 +786,7 @@ function ConsumptionSummary({ consumption }) {
   );
 }
 
-export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
+export function AccuracyDetailDrawer({ r, tolerance = 0.05, onOpenInIntake }) {
   if (!r) return null;
   const focusedItems = r.line_item ? [r.line_item] : (r.items_compare || []);
   const line = r.line_item || null;
@@ -799,21 +807,25 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
   } : r;
   const agentLat = r.agent_decision ? fmtLat(r.agent_latency_s) : '—';
   const amanLat = r.aman_review_min != null ? fmtMins(r.aman_review_min) : 'pending';
-  const totalLat = r.total_end_to_end_min != null ? fmtMins(r.total_end_to_end_min) : '—';
   const agentMeta = r.agent_decision ? `decided in ${agentLat}` : 'escalated / no verdict';
   const amanMeta = r.aman_decision ? `reviewed in ${amanLat} · ${r.callback_mode || 'advisory'}` : 'awaiting writeback';
+  const agentNote = (line && line.agent_reason) || r.agent_reason || 'No agent reason captured.';
+  const amanComment = line?.aman_comment || r.aman_note || '';
+  const amanNote = amanComment || (lineAmanDecision || r.aman_decision ? 'AMAN did not include a comment for this line.' : 'AMAN has not written back a final decision for this line yet.');
+  const lineTitle = line?.name || r.item_description || 'Selected line';
+  const lineClaim = line?.claim_item_id ? `claim #${line.claim_item_id}` : null;
   return (
     <div className="detail">
       <div className="dhead">
         <div>
           <div className="dref">{r.display_request_id}</div>
           <h2 className="dname">{r.patient_name || 'Unnamed enrollee'}</h2>
+          <div className="dsub">{r.plan || '—'} · {r.patient_id || '—'}</div>
         </div>
-        {isAdmin ? (
-          <div style={{ display: 'flex', gap: 8 }} data-admin-only="">
-            <button className="btn sm" disabled data-tip="Override the agent's verdict for this PA. Wires to a future audit-logged endpoint.">Override</button>
-            <button className="btn sm" disabled data-tip="Send this PA to the QA backlog for review.">Flag for QA</button>
-          </div>
+        {onOpenInIntake ? (
+          <button className="btn sm primary" onClick={() => onOpenInIntake(r)} data-tip="Open the full PA drawer in Pre-Auth Intake.">
+            Open in PA intake
+          </button>
         ) : null}
       </div>
 
@@ -840,36 +852,29 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, isAdmin }) {
       </div>
 
       <div>
-        <div className="sec-h">Latency</div>
-        <div className="lat-compare">
-          <div className="lc"><div className="l">Agent decision</div><div className="v agent">{agentLat}</div></div>
-          <div className="lc"><div className="l">AMAN review</div><div className="v aman">{amanLat}</div></div>
-          <div className="lc"><div className="l">End-to-end</div><div className="v">{totalLat}</div></div>
+        <div className="sec-h">Decision notes</div>
+        <div className="decision-notes">
+          <div className="decision-note">
+            <div className="k">Line</div>
+            <div className="v">{lineTitle}</div>
+            {lineClaim ? <div className="m">{lineClaim}</div> : null}
+            <div className="m">{r.requested_amount != null ? `Requested ${fmtNGNfull(line?.agent_requested_cost || r.requested_amount)}` : 'Requested —'}</div>
+          </div>
+          <div className="decision-note">
+            <div className="k">Agent reason</div>
+            <div className="v">{agentNote}</div>
+          </div>
+          <div className="decision-note">
+            <div className="k">AMAN comment</div>
+            <div className="v">{amanNote}</div>
+            {line?.aman_auth_code ? <div className="m">Auth {line.aman_auth_code}</div> : null}
+          </div>
         </div>
       </div>
 
       <div>
-        <div className="sec-h">{line ? 'Focused line item' : 'Line-item comparison'} <span className="n">{line ? `line ${r.line_index || 1} of ${r.line_count || (r.items_compare || []).length || 1}` : `${(r.items_compare || []).length} items`}</span></div>
+        <div className="sec-h">{line ? 'Focused line decision' : 'Line decisions'} <span className="n">{line ? `line ${r.line_index || 1} of ${r.line_count || (r.items_compare || []).length || 1}` : `${(r.items_compare || []).length} items`}</span></div>
         <ItemCompareTable items={focusedItems} />
-      </div>
-
-      <div>
-        <div className="sec-h">Consumption limits</div>
-        <ConsumptionSummary consumption={r.consumption} />
-      </div>
-
-      <div>
-        <div className="sec-h">Request details</div>
-        <div className="dgrid">
-          <div className="cell"><div className="k">Patient ID</div><div className="v mono">{r.patient_id || '—'}</div></div>
-          <div className="cell"><div className="k">Plan</div><div className="v mono">{r.plan || '—'}</div></div>
-          <div className="cell"><div className="k">Diagnosis</div><div className="v">{r.diagnosis || '—'}</div></div>
-          <div className="cell"><div className="k">Facility</div><div className="v">{r.facility || '—'}</div></div>
-          <div className="cell"><div className="k">Item</div><div className="v">{line?.name || r.item_description || '—'}</div></div>
-          <div className="cell"><div className="k">Requested</div><div className="v mono">{r.requested_amount != null ? fmtNGNfull(r.requested_amount) : '—'}</div></div>
-          <div className="cell"><div className="k">Received</div><div className="v mono">{r.received_at ? new Date(r.received_at).toLocaleString() : '—'}</div></div>
-          <div className="cell"><div className="k">Callback mode</div><div className="v mono">{r.callback_mode || '—'}</div></div>
-        </div>
       </div>
     </div>
   );

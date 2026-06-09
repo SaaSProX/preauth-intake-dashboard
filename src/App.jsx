@@ -3495,6 +3495,7 @@ function AppInner() {
   const [accuracyReportMode, setAccuracyReportMode] = useState(null); // mode key when the Weekly QA Report portal is staged for print
   const [accuracyDateFrom, setAccuracyDateFrom] = useState('');     // ISO yyyy-mm-dd, '' = backend default (last 7d)
   const [accuracyDateTo, setAccuracyDateTo] = useState('');
+  const [pendingOpenCheckin, setPendingOpenCheckin] = useState('');
   const [team, setTeam] = useState(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState('');
@@ -4223,6 +4224,14 @@ function AppInner() {
   }, [session?.token, session?.role, session?.org_name, orgs]);
 
   useEffect(() => { if (session?.token) loadDashboard(); /* eslint-disable-next-line */ }, [session?.token, viewOrgId, currentPage, dateFrom, dateTo, debouncedQuery]);
+  useEffect(() => {
+    if (!pendingOpenCheckin || loading) return;
+    const match = requests.find((r) => (r.display_request_id || r.request_id) === pendingOpenCheckin || r.request_id === pendingOpenCheckin);
+    if (!match) return;
+    setSelectedId(match.request_id);
+    setDrawerOpen(true);
+    setPendingOpenCheckin('');
+  }, [pendingOpenCheckin, loading, requests]);
   // Debounce the search box: wait 300ms after last keystroke before fetching.
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -4398,6 +4407,20 @@ function AppInner() {
   }, [selected?.patient_id, viewOrgId]);
 
   function openRequest(id) { setSelectedId(id); setDrawerOpen(true); }
+
+  function openAccuracyPaInIntake(row) {
+    const checkin = row?.display_request_id || String(row?.request_id || '').split('#')[0];
+    if (!checkin) return;
+    setAccuracySelected(null);
+    setDrawerOpen(false);
+    setPendingOpenCheckin(checkin);
+    setQuery(checkin);
+    setDebouncedQuery(checkin);
+    setCurrentPage(1);
+    setDateFrom('');
+    setDateTo('');
+    navigateTo({ nav: 'intake', patient_id: '' });
+  }
 
   if (!session) {
     if (isInviteRegistrationRoute()) {
@@ -4754,7 +4777,7 @@ function AppInner() {
                 <AccuracyDetailDrawer
                   r={accuracySelected}
                   tolerance={accuracy?.params?.tolerance ?? 0.05}
-                  isAdmin={role === 'admin' && !isDrillIn}
+                  onOpenInIntake={openAccuracyPaInIntake}
                 />
               ) : null}
             </div></div>
