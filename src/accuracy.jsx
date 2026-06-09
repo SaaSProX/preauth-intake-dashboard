@@ -147,7 +147,7 @@ function ValueCard({ A }) {
   return (
     <div className="metric">
       <h3>Value flow</h3>
-      <p className="desc">Authorized value through the pipeline (₦) — agent vs AMAN final</p>
+      <p className="desc">Window value totals (₦) — submitted by HMO, agent-approved, and AMAN-approved</p>
       <div className="vflow">
         {rows.map(([l, amt, c]) => (
           <div key={l} className="vrow">
@@ -1048,7 +1048,7 @@ export function WeeklyQaReportSheet({ data, mode = 'all', session, orgName }) {
           <div className="qa-two">
             <div className="qa-card">
               <h3>Value flow</h3>
-              <p className="muted">Authorized value (₦) — agent vs AMAN final</p>
+              <p className="muted">Window value totals (₦) — submitted, agent-approved, and AMAN-approved</p>
               <div className="vflow">
                 {[
                   ['Requested', v.requested, 'var(--ink-4)'],
