@@ -3738,9 +3738,9 @@ function AppInner() {
     } catch (err) { setAuditError(err.message || 'Could not load audit trail'); }
     finally { setAuditLoading(false); }
   }
-  async function loadAccuracy({ from, to } = {}) {
+  async function loadAccuracy({ from, to, silent = false } = {}) {
     if (!session?.token) return;
-    setAccuracyLoading(true);
+    if (!silent) setAccuracyLoading(true);
     setAccuracyError('');
     try {
       const params = new URLSearchParams();
@@ -3750,8 +3750,9 @@ function AppInner() {
       if (f) params.set('date_from', f);
       if (t) params.set('date_to', t);
       setAccuracy(await apiRequest('/auth/qa/accuracy?' + params.toString()));
+      setLastLoaded(Date.now());
     } catch (err) { setAccuracyError(err.message || 'Could not load accuracy data'); }
-    finally { setAccuracyLoading(false); }
+    finally { if (!silent) setAccuracyLoading(false); }
   }
   async function downloadWeeklyQaReport(mode) {
     setAccuracyReportMode(mode || 'all');
@@ -4258,6 +4259,15 @@ function AppInner() {
     return () => window.clearInterval(id);
     // eslint-disable-next-line
   }, [session?.token, activeNav, viewOrgId]);
+
+  useEffect(() => {
+    if (!session?.token || !SHOW_ACCURACY_DASHBOARD || activeNav !== 'accuracy') return undefined;
+    const id = window.setInterval(() => {
+      loadAccuracy({ silent: true });
+    }, 15000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line
+  }, [session?.token, activeNav, viewOrgId, accuracyDateFrom, accuracyDateTo]);
 
   useEffect(() => {
     if (!session?.token) return;
