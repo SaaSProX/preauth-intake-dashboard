@@ -73,6 +73,33 @@ function submittedAt(row) {
   return row?.submitted_at || row?.received_at;
 }
 
+function asObj(v) {
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
+function asArr(v) {
+  return Array.isArray(v) ? v : [];
+}
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function closeNumber(a, b) {
+  const av = num(a);
+  const bv = num(b);
+  if (av == null || bv == null) return false;
+  return Math.abs(av - bv) <= 0.01;
+}
+
+function fmtClock(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
+}
+
 const DEC_TO_STATUS = { APPROVE: 'approve', DENY: 'deny', ESCALATE: 'escalate' };
 function decPill(dec) {
   if (!dec) return <span className="pill pending"><span className="dot" />Pending</span>;
@@ -213,7 +240,7 @@ function MismatchCard({ A, activeCategory, onPickCategory }) {
   return (
     <div className="metric">
       <h3>Where we disagree</h3>
-      <p className="desc">Mismatched PAs by category — what drove the disagreement</p>
+      <p className="desc">Mismatched line items by category — what drove the disagreement</p>
       <div className="mm-bars">
         {cats.length ? cats.map((c, i) => {
           const m = MISMATCH_META[c.key] || { label: c.key, cls: 'deny', blurb: '' };
@@ -257,7 +284,7 @@ function refTail(s) {
   return parts[parts.length - 1] || s;
 }
 
-function lineDecisionFromItem(item, parent) {
+function lineDecisionFromItem(item, parent, tolerance = 0.05) {
   const agent = item?.agent_decision || null;
   const status = String(item?.aman_status || '').toLowerCase();
   const aman =
@@ -289,14 +316,14 @@ function lineDecisionFromItem(item, parent) {
     const agentAmount = Number(item?.agent_recommended_cost || 0);
     const amanAmount = Number(item?.aman_approved_cost || 0);
     const base = Math.max(Math.abs(agentAmount), Math.abs(amanAmount), 1);
-    if (Math.abs(agentAmount - amanAmount) / base > 0.05) {
+    if (Math.abs(agentAmount - amanAmount) / base > tolerance) {
       return { bucket: 'mismatched', category: 'amount' };
     }
   }
   return { bucket: 'matched', category: null };
 }
 
-function rowsFromRecords(records) {
+function rowsFromRecords(records, tolerance = 0.05) {
   return records.flatMap((r) => {
     const items = Array.isArray(r.items_compare) && r.items_compare.length
       ? r.items_compare
@@ -309,7 +336,7 @@ function rowsFromRecords(records) {
         }];
 
     return items.map((item, index) => {
-      const line = lineDecisionFromItem(item, r);
+      const line = lineDecisionFromItem(item, r, tolerance);
       return {
         ...r,
         line_key: `${r.request_id || 'pa'}-${item.claim_item_id || index}`,
@@ -327,7 +354,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
   const PER_PAGE = 14;
   const all = useMemo(() => {
     let recs = recordsForMode(records, state.mode);
-    let rows = rowsFromRecords(recs);
+    let rows = rowsFromRecords(recs, tolerance);
     if (state.outcome === 'matched') rows = rows.filter((r) => r.line_bucket === 'matched');
     if (state.outcome === 'mismatched') rows = rows.filter((r) => r.line_bucket === 'mismatched' || r.bucket === 'mismatched');
     if (state.outcome === 'approved') rows = rows.filter((r) => (r.line_item || {}).aman_status === 'approved');
@@ -347,7 +374,7 @@ function DrilldownTable({ records, A, state, setState, onRowOpen, tolerance }) {
       });
     }
     return rows.slice().sort((a, b) => new Date(submittedAt(b) || 0).getTime() - new Date(submittedAt(a) || 0).getTime());
-  }, [records, state.mode, state.outcome, state.onlyMismatch, state.category, state.plan, state.search]);
+  }, [records, state.mode, state.outcome, state.onlyMismatch, state.category, state.plan, state.search, tolerance]);
 
   if (!all.length) {
     return (
@@ -514,7 +541,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
   });
 
   const aggregates = data?.aggregates || {};
-  const A = aggregates[state.mode] || { total: 0, scored: 0, matched: 0, mismatched: 0, pending_aman: 0, agent_skipped: 0, decision_match: 0, amount_match: 0, value: {}, latency: {}, categories: [] };
+  const A = aggregates[state.mode] || { pa_total: 0, total: 0, scored: 0, matched: 0, mismatched: 0, pending_aman: 0, agent_skipped: 0, decision_match: 0, amount_match: 0, value: {}, latency: {}, categories: [] };
   const records = data?.records || [];
   const tolerance = data?.params?.tolerance ?? 0.05;
   const label = data?.window?.label || period || '—';
@@ -527,7 +554,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
           <p className="page-sub">
             <span data-tip="Period — adjust via the date range below.">{label}</span>
             <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
-            <span><b>{A.total}</b> PAs · {A.scored} scored · {A.label || (state.mode === 'all' ? 'All modes' : state.mode === 'advisory' ? 'Advisory mode' : 'Applied mode')}</span>
+            <span><b>{A.value?.unique_pas ?? A.pa_total ?? 0}</b> PAs · {A.total} line items · {A.scored} scored · {A.label || (state.mode === 'all' ? 'All modes' : state.mode === 'advisory' ? 'Advisory mode' : 'Applied mode')}</span>
           </p>
         </div>
         <div className="page-actions">
@@ -565,7 +592,7 @@ export function AccuracyView({ data, loading, error, onRefresh, onOpenRow, onDow
       <div className="section-gap" style={{ marginTop: 18 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
           <h2 style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 500, margin: 0 }}>Filter</h2>
-          <span className="muted mono" style={{ fontSize: 12 }}>{A.total || 0} PA{A.total === 1 ? '' : 's'} · {A.scored || 0} scored</span>
+          <span className="muted mono" style={{ fontSize: 12 }}>{A.total || 0} line item{A.total === 1 ? '' : 's'} · {A.scored || 0} scored</span>
         </div>
         <div className="toolbar" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <div className="search" style={{ minWidth: 240, flex: '1 1 240px' }}>
@@ -706,6 +733,7 @@ function AmanStatusPill({ status }) {
 function AgentItemPill({ decision }) {
   if (decision === 'APPROVE') return <span className="pill approve"><span className="dot" />Covered</span>;
   if (decision === 'DENY')    return <span className="pill deny"><span className="dot" />Denied</span>;
+  if (decision === 'ESCALATE') return <span className="pill escalate"><span className="dot" />Review</span>;
   return <span className="pill pending"><span className="dot" />—</span>;
 }
 
@@ -825,9 +853,127 @@ function ConsumptionSummary({ consumption }) {
   );
 }
 
+const AGENT_STAGE_NAMES = {
+  1: 'Eligibility',
+  2: 'Plan & Coverage',
+  3: 'Utilization & Limits',
+  4: 'Final Decision',
+};
+
+function stageStatusClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (['pass', 'approved', 'approve', 'success', 'ok'].includes(s)) return 'approve';
+  if (['fail', 'failed', 'deny', 'denied', 'reject', 'rejected', 'error'].includes(s)) return 'deny';
+  return 'pending';
+}
+
+function stageReason(result) {
+  const r = asObj(result);
+  return r.reason || r.reasoning || r.denial_reason || r.escalation_reason || r.explanation || '';
+}
+
+function stageItemDecisions(result) {
+  const r = asObj(result);
+  return [
+    ...asArr(r.item_decisions),
+    ...asArr(asObj(r.agent3).item_decisions),
+  ];
+}
+
+function stageDecisionForLine(stage, line) {
+  if (!line) return null;
+  const decisions = stageItemDecisions(stage.result);
+  const claim = line.claim_item_id != null ? String(line.claim_item_id) : null;
+  const name = String(line.name || '').trim().toLowerCase();
+  const requested = num(line.agent_requested_cost);
+  return decisions.find((decision) => {
+    const dClaim = decision?.claim_item_id != null || decision?.id != null
+      ? String(decision.claim_item_id ?? decision.id)
+      : null;
+    if (claim && dClaim && claim === dClaim) return true;
+    const dName = String(decision?.item_name || decision?.name || '').trim().toLowerCase();
+    const nameMatch = name && dName && name === dName;
+    const costMatch = requested == null || closeNumber(decision?.requested_cost, requested);
+    return nameMatch && costMatch;
+  }) || null;
+}
+
+function normalizeAgentVerdict(value) {
+  const v = String(value || '').trim().toUpperCase();
+  if (['APPROVE', 'APPROVED', 'PASS'].includes(v)) return 'APPROVE';
+  if (['DENY', 'DENIED', 'REJECT', 'REJECTED', 'FAIL'].includes(v)) return 'DENY';
+  if (v) return 'ESCALATE';
+  return null;
+}
+
+function AgentReviewTimeline({ stages, line }) {
+  const rows = asArr(stages)
+    .filter((stage) => stage && typeof stage === 'object')
+    .slice()
+    .sort((a, b) => {
+      const ta = new Date(a.logged_at || 0).getTime();
+      const tb = new Date(b.logged_at || 0).getTime();
+      if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
+      return Number(a.agent_num || 0) - Number(b.agent_num || 0);
+    });
+
+  if (!rows.length) {
+    return (
+      <p className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12, padding: '8px 0' }}>
+        No agent review logs were captured for this advisory run.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {rows.map((stage, idx) => {
+        const result = asObj(stage.result);
+        const n = Number(stage.agent_num || idx + 1);
+        const name = stage.agent_name || AGENT_STAGE_NAMES[n] || `Agent ${n}`;
+        const cls = stageStatusClass(stage.status);
+        const reason = stageReason(result);
+        const itemDecision = stageDecisionForLine(stage, line);
+        const itemReason = itemDecision?.reason || itemDecision?.coverage_reason || '';
+        const itemDecisionLabel = normalizeAgentVerdict(itemDecision?.decision || itemDecision?.recommendation || itemDecision?.coverage_decision);
+        const approved = itemDecision?.recommended_approved_cost;
+        return (
+          <div key={`${n}-${stage.logged_at || idx}`} style={{ border: '1px solid var(--line)', borderRadius: 10, background: 'var(--bg)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 12px', background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink)', fontWeight: 700 }}>
+                  Agent {n} · {name}
+                </div>
+                <div className="muted mono" style={{ fontSize: 11, marginTop: 2 }}>{fmtClock(stage.logged_at)}</div>
+              </div>
+              <span className={`pill ${cls}`}><span className="dot" />{stage.status || 'review'}</span>
+            </div>
+            <div style={{ padding: '10px 12px', display: 'grid', gap: 7, fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+              {reason ? <div><b style={{ color: 'var(--ink)' }}>Review:</b> {reason}</div> : null}
+              {itemDecision ? (
+                <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '8px 9px', background: 'var(--bg-2)' }}>
+                  <div className="muted mono" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Selected line</div>
+                  <div>
+                    {itemDecisionLabel ? <AgentItemPill decision={itemDecisionLabel} /> : null}
+                    {approved != null ? <span className="mono" style={{ marginLeft: 8 }}>{fmtNGNfull(approved)}</span> : null}
+                  </div>
+                  {itemReason ? <div style={{ marginTop: 6 }}>{itemReason}</div> : null}
+                </div>
+              ) : null}
+              <details>
+                <summary style={{ cursor: 'pointer', color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 11 }}>Agent {n} raw JSON</summary>
+                <pre style={{ margin: '8px 0 0', padding: 10, borderRadius: 8, background: 'var(--bg-2)', border: '1px solid var(--line)', overflow: 'auto', maxHeight: 260, fontSize: 11, lineHeight: 1.45 }}>{JSON.stringify(result, null, 2)}</pre>
+              </details>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AccuracyDetailDrawer({ r, tolerance = 0.05, onOpenInIntake }) {
   if (!r) return null;
-  const focusedItems = r.line_item ? [r.line_item] : (r.items_compare || []);
   const line = r.line_item || null;
   const lineAmanDecision = line ? (
     line.aman_status === 'approved' ? 'APPROVE' :
@@ -861,12 +1007,14 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, onOpenInIntake }) {
           <h2 className="dname">{r.patient_name || 'Unnamed enrollee'}</h2>
           <div className="dsub">{r.plan || '—'} · {r.patient_id || '—'}</div>
         </div>
-        {onOpenInIntake ? (
-          <button className="btn sm primary" onClick={() => onOpenInIntake(r)} data-tip="Open the full PA drawer in Pre-Auth Intake.">
-            Open in PA intake
-          </button>
-        ) : null}
       </div>
+      {onOpenInIntake ? (
+        <div className="dactions">
+          <button className="btn sm primary" onClick={() => onOpenInIntake(r)} data-tip="Open the full PA drawer in Pre-Auth Intake.">
+            Open PA intake
+          </button>
+        </div>
+      ) : null}
 
       <div>
         <div className="sec-h">{line ? 'Selected line decision' : 'Decision compare'} <span className="n">agent ↔ AMAN</span></div>
@@ -891,6 +1039,11 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, onOpenInIntake }) {
       </div>
 
       <div>
+        <div className="sec-h">Agent review timeline <span className="n">{asArr(r.agent_logs).length} agent{asArr(r.agent_logs).length === 1 ? '' : 's'}</span></div>
+        <AgentReviewTimeline stages={r.agent_logs} line={line} />
+      </div>
+
+      <div>
         <div className="sec-h">Decision notes</div>
         <div className="decision-notes">
           <div className="decision-note">
@@ -911,10 +1064,12 @@ export function AccuracyDetailDrawer({ r, tolerance = 0.05, onOpenInIntake }) {
         </div>
       </div>
 
-      <div>
-        <div className="sec-h">{line ? 'Focused line decision' : 'Line decisions'} <span className="n">{line ? `line ${r.line_index || 1} of ${r.line_count || (r.items_compare || []).length || 1}` : `${(r.items_compare || []).length} items`}</span></div>
-        <ItemCompareTable items={focusedItems} />
-      </div>
+      {!line && (r.items_compare || []).length ? (
+        <div>
+          <div className="sec-h">Line decisions <span className="n">{(r.items_compare || []).length} items</span></div>
+          <ItemCompareTable items={r.items_compare || []} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1012,7 +1167,8 @@ export function WeeklyQaReportSheet({ data, mode = 'all', session, orgName }) {
             <div className="rt-sub">{data.window?.label || '—'} · {A.label || mode}</div>
             <div className="rt-meta">
               <div className="rt-cell"><span className="rt-l">Period</span><span className="rt-v">{cadence.period}</span></div>
-              <div className="rt-cell"><span className="rt-l">PAs in window</span><span className="rt-v">{A.total}</span></div>
+              <div className="rt-cell"><span className="rt-l">PAs in window</span><span className="rt-v">{A.value?.unique_pas ?? A.pa_total ?? 0}</span></div>
+              <div className="rt-cell"><span className="rt-l">Line items reviewed</span><span className="rt-v">{A.total}</span></div>
               <div className="rt-cell"><span className="rt-l">Scored vs AMAN</span><span className="rt-v">{A.scored}</span></div>
               <div className="rt-cell"><span className="rt-l">Match rate</span><span className="rt-v">{matchRate}%</span></div>
               <div className="rt-cell"><span className="rt-l">Mode</span><span className="rt-v">{A.label}</span></div>

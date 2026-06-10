@@ -3493,8 +3493,8 @@ function AppInner() {
   const [accuracyError, setAccuracyError] = useState('');
   const [accuracySelected, setAccuracySelected] = useState(null);   // record currently in the side-by-side drawer
   const [accuracyReportMode, setAccuracyReportMode] = useState(null); // mode key when the Weekly QA Report portal is staged for print
-  const [accuracyDateFrom, setAccuracyDateFrom] = useState('');     // ISO yyyy-mm-dd, '' = backend default (last 7d)
-  const [accuracyDateTo, setAccuracyDateTo] = useState('');
+  const [accuracyDateFrom, setAccuracyDateFrom] = useState(() => todayDateInputValue());
+  const [accuracyDateTo, setAccuracyDateTo] = useState(() => todayDateInputValue());
   const [pendingOpenCheckin, setPendingOpenCheckin] = useState('');
   const [team, setTeam] = useState(null);
   const [teamLoading, setTeamLoading] = useState(false);
