@@ -855,6 +855,8 @@ function deriveStages(r) {
 function mapRequest(r) {
   const raw = asObj(r.raw_payload);
   const enc = asObj(raw.encounter);
+  const policy = asObj(raw.policy);
+  const extracted = asObj(r.extracted_fields);
   const ar = asObj(r.agent_result);
   const isLive = raw.event_type === 'pa.submitted';
   let status = normalizeStatus(r.status);
@@ -886,6 +888,7 @@ function mapRequest(r) {
     agent_total_approved_amount: agentTotals.approved,
     agent_total_denied_amount: agentTotals.denied,
     facility: r.facility || '—',
+    corporation: r.corporation || extracted.corporation_name || policy.corporation_name || '—',
     requesting_provider: providerLabel(r.requesting_provider) || '—',
     processing_seconds: r.processing_seconds,
     received_at: r.received_at,
@@ -1387,6 +1390,7 @@ function DetailsGrid({ r }) {
     ['Line items', String(r.line_item_count || (r.items ? r.items.length : 0)), true],
     ['Encounter', r.checkin_type, false],
     ['Facility', r.facility, false],
+    ['Corporation', r.corporation, false],
     ['Provider', r.requesting_provider, false],
     ['Received', r.received_label, true],
     ['Decision latency', fmtSecs(r.processing_seconds), true],
@@ -4336,7 +4340,7 @@ function AppInner() {
     const q = query.trim().toLowerCase();
     return requests.filter((r) => {
       const okS = statusFilter === 'all' || r.status === statusFilter;
-      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.item_description, r.facility, r.requesting_provider, r.display_decision, r.decision].filter(Boolean).join(' ').toLowerCase();
+      const blob = [r.display_request_id, r.patient_name, r.patient_id, r.plan, r.corporation, r.item_description, r.facility, r.requesting_provider, r.display_decision, r.decision].filter(Boolean).join(' ').toLowerCase();
       return okS && (!q || blob.includes(q));
     });
   }, [requests, query, statusFilter]);
@@ -4597,7 +4601,7 @@ function AppInner() {
                       <input
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search reference, patient, provider, plan, item, facility…"
+                        placeholder="Search reference, patient, corporation, provider, plan, item, facility…"
                         data-tip="Searches patient ID, request ID, decision, and the full webhook payload (names, facilities, plans, item descriptions). Server-side, across all pages."
                         data-tip-pos="below"
                         data-tip-align="left"
