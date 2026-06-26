@@ -9,6 +9,8 @@ const SHOW_ACCURACY_DASHBOARD = import.meta.env.VITE_SHOW_ACCURACY_DASHBOARD ===
 const DEMO_PA_COUNT_OFFSET = 10_000;
 const DEMO_LINE_ITEM_MULTIPLIER = 5;
 const DEMO_VALUE_MULTIPLIER = 5;
+const DEMO_RECEIVED_VALUE_OFFSET = 1_000_000_000;
+const DEMO_APPROVED_VALUE_OFFSET = 700_000_000;
 
 function demoNumber(value) {
   const n = Number(value || 0);
@@ -19,8 +21,14 @@ function demoScaleLineItems(value) {
   return Math.round(demoNumber(value) * DEMO_LINE_ITEM_MULTIPLIER);
 }
 
-function demoScaleValue(value) {
-  return demoNumber(value) * DEMO_VALUE_MULTIPLIER;
+function demoScaleReceivedValue(value) {
+  const n = demoNumber(value);
+  return n > 0 ? (n * DEMO_VALUE_MULTIPLIER) + DEMO_RECEIVED_VALUE_OFFSET : 0;
+}
+
+function demoScaleApprovedValue(value) {
+  const n = demoNumber(value);
+  return n > 0 ? (n * DEMO_VALUE_MULTIPLIER) + DEMO_APPROVED_VALUE_OFFSET : 0;
 }
 
 function demoScalePaTotal(value) {
@@ -69,6 +77,7 @@ async function publicApiRequest(path, options = {}) {
 function fmtNGN(n) {
   if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
   n = Number(n);
+  if (n >= 1_000_000_000) return '₦' + (n / 1_000_000_000).toFixed(n % 1_000_000_000 === 0 ? 0 : 2) + 'b';
   if (n >= 1_000_000) return '₦' + (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 2) + 'm';
   if (n >= 1_000) return '₦' + (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
   return '₦' + n.toLocaleString();
@@ -4493,8 +4502,8 @@ function AppInner() {
       : 0
   ));
   const latSeries = series.map((d) => d.avg_latency);
-  const paValueReceived = demoScaleValue(summary.intake_value ?? summary.current_snapshot_value ?? 0);
-  const paValueApproved = demoScaleValue(summary.total_amount_approved ?? 0);
+  const paValueReceived = demoScaleReceivedValue(summary.intake_value ?? summary.current_snapshot_value ?? 0);
+  const paValueApproved = demoScaleApprovedValue(summary.total_amount_approved ?? 0);
   const paLineItems = demoScaleLineItems(summary.added_line_items ?? summary.current_snapshot_line_items ?? 0);
   const rawApprovedPaCount = Number(summary.pa_full_approved ?? summary.approved ?? 0);
   const rawPartialPaCount = Number(summary.pa_partial_approved || 0);
