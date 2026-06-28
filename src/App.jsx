@@ -6,42 +6,6 @@ import { AccuracyView, AccuracyDetailDrawer, WeeklyQaReportSheet } from './accur
 const STORAGE_KEY = 'saaspro-preauth-dashboard-session';
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
 const SHOW_ACCURACY_DASHBOARD = import.meta.env.VITE_SHOW_ACCURACY_DASHBOARD === 'true';
-const DEMO_PA_COUNT_OFFSET = 10_000;
-const DEMO_LINE_ITEM_MULTIPLIER = 5;
-const DEMO_VALUE_MULTIPLIER = 5;
-const DEMO_RECEIVED_VALUE_OFFSET = 1_000_000_000;
-const DEMO_APPROVED_VALUE_OFFSET = 700_000_000;
-
-function demoNumber(value) {
-  const n = Number(value || 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function demoScaleLineItems(value) {
-  return Math.round(demoNumber(value) * DEMO_LINE_ITEM_MULTIPLIER);
-}
-
-function demoScaleReceivedValue(value) {
-  const n = demoNumber(value);
-  return n > 0 ? (n * DEMO_VALUE_MULTIPLIER) + DEMO_RECEIVED_VALUE_OFFSET : 0;
-}
-
-function demoScaleApprovedValue(value) {
-  const n = demoNumber(value);
-  return n > 0 ? (n * DEMO_VALUE_MULTIPLIER) + DEMO_APPROVED_VALUE_OFFSET : 0;
-}
-
-function demoScalePaTotal(value) {
-  const n = demoNumber(value);
-  return n > 0 ? Math.round(n + DEMO_PA_COUNT_OFFSET) : 0;
-}
-
-function demoScalePaOutcome(value, total) {
-  const n = demoNumber(value);
-  const t = demoNumber(total);
-  if (n <= 0) return 0;
-  return Math.round(n + (DEMO_PA_COUNT_OFFSET * (n / Math.max(t, 1))));
-}
 
 function normalizeApiBaseUrl(value) {
   const t = String(value || '').trim();
@@ -77,7 +41,6 @@ async function publicApiRequest(path, options = {}) {
 function fmtNGN(n) {
   if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
   n = Number(n);
-  if (n >= 1_000_000_000) return '₦' + (n / 1_000_000_000).toFixed(n % 1_000_000_000 === 0 ? 0 : 2) + 'b';
   if (n >= 1_000_000) return '₦' + (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 2) + 'm';
   if (n >= 1_000) return '₦' + (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
   return '₦' + n.toLocaleString();
@@ -4491,31 +4454,19 @@ function AppInner() {
   const statusFilters = ['all', 'approve', 'partial_approve', 'deny', 'escalate', 'processing', 'pending', 'received', 'error'];
 
   // chart inputs from the real daily series + summary
-  const periodRequestCount = demoScalePaTotal(summary.total ?? requests.length);
+  const periodRequestCount = summary.total ?? requests.length;
   const dayLabels = series.map((d) => d.day.slice(5));
   const dayTooltipLabels = series.map((d) => d.day);
-  const rawRecvSeries = series.map((d) => demoNumber(d.received));
-  const rawRecvSeriesTotal = rawRecvSeries.reduce((sum, n) => sum + n, 0);
-  const recvSeries = rawRecvSeries.map((n) => (
-    n > 0 && rawRecvSeriesTotal > 0
-      ? Math.round(n + (DEMO_PA_COUNT_OFFSET * (n / rawRecvSeriesTotal)))
-      : 0
-  ));
+  const recvSeries = series.map((d) => d.received);
   const latSeries = series.map((d) => d.avg_latency);
-  const paValueReceived = demoScaleReceivedValue(summary.intake_value ?? summary.current_snapshot_value ?? 0);
-  const paValueApproved = demoScaleApprovedValue(summary.total_amount_approved ?? 0);
-  const paLineItems = demoScaleLineItems(summary.added_line_items ?? summary.current_snapshot_line_items ?? 0);
-  const rawApprovedPaCount = Number(summary.pa_full_approved ?? summary.approved ?? 0);
-  const rawPartialPaCount = Number(summary.pa_partial_approved || 0);
-  const rawRejectedPaCount = Number(summary.pa_rejected ?? summary.denied ?? 0);
-  const rawReviewPaCount = Number(summary.pa_review ?? summary.escalated ?? 0);
-  const rawPendingPaCount = (summary.pending || 0) + (summary.processing || 0);
-  const rawOutcomeCount = rawApprovedPaCount + rawPartialPaCount + rawRejectedPaCount + rawReviewPaCount + rawPendingPaCount;
-  const approvedPaCount = demoScalePaOutcome(rawApprovedPaCount, rawOutcomeCount);
-  const partialPaCount = demoScalePaOutcome(rawPartialPaCount, rawOutcomeCount);
-  const rejectedPaCount = demoScalePaOutcome(rawRejectedPaCount, rawOutcomeCount);
-  const reviewPaCount = demoScalePaOutcome(rawReviewPaCount, rawOutcomeCount);
-  const pendingPaCount = demoScalePaOutcome(rawPendingPaCount, rawOutcomeCount);
+  const paValueReceived = Number(summary.intake_value ?? summary.current_snapshot_value ?? 0);
+  const paValueApproved = Number(summary.total_amount_approved ?? 0);
+  const paLineItems = summary.added_line_items ?? summary.current_snapshot_line_items ?? 0;
+  const approvedPaCount = Number(summary.pa_full_approved ?? summary.approved ?? 0);
+  const partialPaCount = Number(summary.pa_partial_approved || 0);
+  const rejectedPaCount = Number(summary.pa_rejected ?? summary.denied ?? 0);
+  const reviewPaCount = Number(summary.pa_review ?? summary.escalated ?? 0);
+  const pendingPaCount = (summary.pending || 0) + (summary.processing || 0);
   const decided = approvedPaCount + partialPaCount + rejectedPaCount + reviewPaCount;
   const approvalRate = decided ? Math.round(((approvedPaCount + partialPaCount) / decided) * 100) : 0;
   const visibleRetryableCount = filtered.filter((r) => RETRYABLE_REQUEST_STATUSES.has(r.status)).length;
@@ -4557,7 +4508,7 @@ function AppInner() {
           setTeamNotice('');
         }}
         session={session}
-        intakeCount={demoScalePaTotal(summary.received_24h ?? 0)}
+        intakeCount={summary.received_24h ?? 0}
         collapsed={collapsed}
         onToggleCollapse={toggleSidebar}
         isPlatformAdmin={isPlatformAdmin}
@@ -4604,7 +4555,7 @@ function AppInner() {
                         <span data-tip="Earliest and latest received_at of PAs in this org. Active filters override this window.">{periodLabel}</span>
                         {haveFilter ? <span className="muted" style={{ marginLeft: 6 }} data-tip="A toolbar date filter is active. Clear it to see the full data window.">(filtered)</span> : null}
                         <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
-                        <span data-tip="Auto-refreshes every 15s.">Live</span> · {periodRequestCount.toLocaleString()} requests
+                        <span data-tip="Auto-refreshes every 15s.">Live</span> · {summary.total ?? requests.length} requests
                       </>
                     );
                   })()}
@@ -4674,10 +4625,10 @@ function AppInner() {
                     title="Requests received"
                     tip="Inbound webhook count over the period. Includes parse-failed deliveries that never made it to a PA."
                     desc="Inbound pre-auth volume across the period"
-                    big={`${periodRequestCount.toLocaleString()} <small>this period</small>`}
+                    big={`${periodRequestCount} <small>this period</small>`}
                     chartHtml={chartBars(recvSeries, { accent: 'var(--ink-3)', labels: dayLabels, tooltipLabels: dayTooltipLabels, suffix: ' requests' })}
                     moveH="Inbound volume"
-                    moveP={`${periodRequestCount.toLocaleString()} requests this period. ${pendingPaCount.toLocaleString()} pending or processing a first decision.`}
+                    moveP={`${periodRequestCount} requests this period. ${summary.processing ?? 0} processing and ${summary.pending ?? 0} pending a first decision.`}
                   />
                   <ValuePairMetricCard
                     received={paValueReceived}
