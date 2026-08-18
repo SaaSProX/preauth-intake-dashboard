@@ -3440,6 +3440,10 @@ function AppInner() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Guards against the 15s poll piling up overlapping requests when one
+  // fetch runs long — a stacked-up poll just skips its tick instead of
+  // firing another request on top of the one still in flight.
+  const dashboardInFlightRef = useRef(false);
   const [selectedId, setSelectedId] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -3499,6 +3503,10 @@ function AppInner() {
   const [accuracyReportMode, setAccuracyReportMode] = useState(null); // mode key when the Weekly QA Report portal is staged for print
   const [accuracyDateFrom, setAccuracyDateFrom] = useState(() => todayDateInputValue());
   const [accuracyDateTo, setAccuracyDateTo] = useState(() => todayDateInputValue());
+  // Same in-flight guard as dashboardInFlightRef — the accuracy query is the
+  // heaviest one, so it's the one most likely to still be running when the
+  // next 15s poll tick fires.
+  const accuracyInFlightRef = useRef(false);
   const [pendingOpenCheckin, setPendingOpenCheckin] = useState('');
   const [team, setTeam] = useState(null);
   const [teamLoading, setTeamLoading] = useState(false);
@@ -3603,6 +3611,8 @@ function AppInner() {
 
   async function loadDashboard({ silent = false } = {}) {
     if (!session?.token) return;
+    if (dashboardInFlightRef.current) return;
+    dashboardInFlightRef.current = true;
     if (!silent) setLoading(true);
     setError('');
     try {
@@ -3624,6 +3634,7 @@ function AppInner() {
       }
       setError(err.message || 'Could not load dashboard');
     } finally {
+      dashboardInFlightRef.current = false;
       if (!silent) setLoading(false);
       if (!silent) setSwitchingOrg(false);
     }
@@ -3744,6 +3755,8 @@ function AppInner() {
   }
   async function loadAccuracy({ from, to, silent = false } = {}) {
     if (!session?.token) return;
+    if (accuracyInFlightRef.current) return;
+    accuracyInFlightRef.current = true;
     if (!silent) setAccuracyLoading(true);
     setAccuracyError('');
     try {
@@ -3756,7 +3769,7 @@ function AppInner() {
       setAccuracy(await apiRequest('/auth/qa/accuracy?' + params.toString()));
       setLastLoaded(Date.now());
     } catch (err) { setAccuracyError(err.message || 'Could not load accuracy data'); }
-    finally { if (!silent) setAccuracyLoading(false); }
+    finally { accuracyInFlightRef.current = false; if (!silent) setAccuracyLoading(false); }
   }
   async function downloadWeeklyQaReport(mode) {
     setAccuracyReportMode(mode || 'all');
