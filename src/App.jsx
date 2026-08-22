@@ -563,6 +563,60 @@ function AgentDecisionBadge({ decision }) {
     </span>
   );
 }
+function clinicalReviewInfo(status) {
+  const value = String(status || '').trim().toUpperCase();
+  if (value === 'SUPPORTED') return { label: 'NHIA supported', bg: 'var(--ok-bg)', ink: 'var(--ok-ink)', line: 'var(--ok-line)' };
+  if (value === 'NOT_SUPPORTED') return { label: 'NHIA not supported', bg: 'var(--bad-bg)', ink: 'var(--bad-ink)', line: 'var(--bad-line)' };
+  if (value === 'UNCLEAR') return { label: 'NHIA unclear', bg: 'var(--warn-bg)', ink: 'var(--warn-ink)', line: 'var(--warn-line)' };
+  return { label: 'NHIA insufficient info', bg: 'var(--slate-bg)', ink: 'var(--slate-ink)', line: 'var(--slate-line)' };
+}
+function ClinicalReviewBadge({ status }) {
+  const meta = clinicalReviewInfo(status);
+  return (
+    <span
+      data-tip="Shadow assessment against NHIA Book 3. It does not affect the insurance decision."
+      style={{
+        background: meta.bg,
+        color: meta.ink,
+        border: `1px solid ${meta.line}`,
+        padding: '1px 7px',
+        borderRadius: 999,
+        fontSize: 10.5,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        fontFamily: 'var(--mono)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {meta.label}
+    </span>
+  );
+}
+function ClinicalReviewEvidence({ review }) {
+  const result = asObj(review);
+  if (!Object.keys(result).length) return null;
+  const references = asArr(result.references);
+  const missing = asArr(result.missing_information);
+  return (
+    <div style={{ gridColumn: '1 / -1', marginTop: 6, padding: '10px 12px', border: '1px solid var(--indigo-soft)', borderRadius: 8, background: 'var(--indigo-bg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <ClinicalReviewBadge status={result.clinical_status} />
+        <span className="muted mono" style={{ fontSize: 10.5 }}>shadow only · does not affect decision</span>
+      </div>
+      {result.rationale ? <div style={{ marginTop: 8, whiteSpace: 'normal', lineHeight: 1.5, color: 'var(--ink)', fontFamily: 'var(--sans)', fontSize: 12.5 }}>{result.rationale}</div> : null}
+      {references.length ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+          {references.map((reference, index) => (
+            <div key={reference.section_id || index} className="mono" style={{ fontSize: 10.5, color: 'var(--ink-2)', lineHeight: 1.45 }}>
+              NHIA Book 3 · {reference.chapter || 'Clinical guideline'} · PDF p.{reference.pdf_page || '—'} / printed p.{reference.printed_page || '—'} · {String(reference.field || 'section').replaceAll('_', ' ')}
+            </div>
+          ))}
+        </div>
+      ) : <div className="muted mono" style={{ marginTop: 7, fontSize: 10.5 }}>No validated NHIA page citation selected.</div>}
+      {missing.length ? <div className="muted" style={{ marginTop: 7, fontSize: 11.5 }}>Missing information: {missing.join('; ')}</div> : null}
+    </div>
+  );
+}
 function itemIdentityValues(item) {
   return [
     item?.claim_item_id,
@@ -812,18 +866,20 @@ function isPartialApproval(ar, totals) {
   const total = _evtNum(summary.total) ?? totals.count ?? 0;
   return approved > 0 && (denied > 0 || escalated > 0 || (total > 0 && approved < total) || totals.denied > 0);
 }
-const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision' };
+const STAGE_NAMES = { 1: 'Eligibility', 2: 'Plan & Coverage', 3: 'Utilization & Limits', 4: 'Final Decision', 5: 'NHIA Clinical Review (Shadow)' };
 const STAGE_TIPS = {
   Eligibility: 'Is the member valid — active, not expired, within age limit, enrollment valid?',
   'Plan & Coverage': 'Is each requested item covered, excluded, or in a waiting period?',
   'Utilization & Limits': 'Does this PA fit under the patient’s bucket limit and annual cap?',
   'Final Decision': 'Aggregates stages 1–3 into APPROVE / DENY / ESCALATE plus an approved amount.',
+  'NHIA Clinical Review (Shadow)': 'Checks clinical appropriateness against NHIA Book 3 with source-page citations. Shadow results cannot change the insurance decision.',
 };
 const STAGE_Q = {
   Eligibility: 'Is the member valid — active, not expired, within age limit?',
   'Plan & Coverage': 'Is the item covered, excluded, or in a waiting period?',
   'Utilization & Limits': 'Does the cost fit under the benefit and annual cap?',
   'Final Decision': 'Aggregate stages 1–3 → APPROVE / DENY / ESCALATE',
+  'NHIA Clinical Review (Shadow)': 'Does NHIA Book 3 support this requested service for the supplied clinical context?',
 };
 function deriveStages(r) {
   const logs = asArr(r.agent_logs);
@@ -904,6 +960,7 @@ function mapRequest(r) {
     flags: asArr(ar.flags),
     items,
     item_decisions: asArr(ar.item_decisions),
+    clinical_review: asObj(r.clinical_review || ar.clinical_review),
     aman_prior_context: Object.keys(asObj(ar.aman_prior_context)).length
       ? asObj(ar.aman_prior_context)
       : asObj(asObj(ar.agent3).aman_prior_context),
@@ -1754,6 +1811,7 @@ function EventItemRows({ items, stages, fallbackDecisions, amanLookup, currentEv
                     {agentDecision.recommended_approved_cost != null ? <span style={{ marginLeft: 8 }}>· {fmtNGNfull(agentDecision.recommended_approved_cost)}</span> : null}
                   </div>
                   {agentDecision.reason ? <><div className="muted">Agent reason</div><div style={{ whiteSpace: 'normal', lineHeight: 1.45 }}>{agentDecision.reason}</div></> : null}
+                  <ClinicalReviewEvidence review={agentDecision.nhia_clinical_review} />
                 </>
               ) : null}
               {amanItem.item_status != null ? <><div className="muted">AMAN status</div><div>{itemStatusInfo(amanItem)?.label || String(amanItem.item_status)}</div></> : null}
@@ -1791,6 +1849,34 @@ function EventItemRows({ items, stages, fallbackDecisions, amanLookup, currentEv
     </div>
   );
 }
+function ClinicalReviewSummary({ review }) {
+  const result = asObj(review);
+  const assessments = asArr(result.item_assessments);
+  if (!assessments.length) return null;
+  const summary = asObj(result.summary);
+  const labels = [
+    ['SUPPORTED', 'supported'],
+    ['NOT_SUPPORTED', 'not supported'],
+    ['UNCLEAR', 'unclear'],
+    ['INSUFFICIENT_INFORMATION', 'insufficient information'],
+  ];
+  return (
+    <div style={{ border: '1px solid var(--indigo-soft)', borderRadius: 10, background: 'var(--indigo-bg)', padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>NHIA clinical review</div>
+          <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>Book 3 evidence · shadow mode · does not affect this PA decision</div>
+        </div>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{assessments.length} line{assessments.length === 1 ? '' : 's'} reviewed</span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
+        {labels.map(([key, label]) => Number(summary[key] || 0) > 0 ? (
+          <span key={key} className="mono" style={{ fontSize: 10.5, padding: '3px 7px', border: '1px solid var(--line)', borderRadius: 999, background: 'var(--bg)' }}>{summary[key]} {label}</span>
+        ) : null)}
+      </div>
+    </div>
+  );
+}
 function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, paEventsError, onOpenPatient, canSendDecision, sendingDecision, onSendDecision, orgId }) {
   if (!r) return null;
   const eventRuns = attachStageRunsToEvents(paEvents || [], r.stages || []);
@@ -1824,6 +1910,7 @@ function DetailView({ r, siblings, onSelectSibling, paEvents, paEventsLoading, p
         </div>
       </div>
       <DecisionBlock r={r} />
+      <ClinicalReviewSummary review={r.clinical_review} />
       <AmanWritebackPanel r={r} canSend={canSendDecision} sending={sendingDecision} onSend={onSendDecision} />
       <div><div className="sec-h">Request details</div><DetailsGrid r={r} /></div>
       {siblings && siblings.length > 0 ? (
